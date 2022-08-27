@@ -8,6 +8,7 @@ import (
 	"log"
 	"math"
 	"math/rand"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -193,7 +194,18 @@ func main() {
 	adminAuthAPI.POST("/admin/user/:userID/ban", h.adminBanUser)
 
 	e.Logger.Infof("Start server: address=%s", e.Server.Addr)
-	e.Logger.Error(e.StartServer(e.Server))
+	var err error
+
+	_ = os.Remove("/tmp/app.socket")
+	e.Listener, err = net.Listen("unix", "/tmp/app.socket")
+	if err != nil {
+		log.Fatalf("create unix socket: %w", err)
+	}
+	if err := os.Chmod("/tmp/app.socket", 0777); err != nil {
+		log.Fatal("set unix socket permission: %w", err)
+	}
+
+	e.Logger.Error(e.Start(""))
 }
 
 var cpuProfiler struct {
@@ -248,8 +260,8 @@ func connectDBn(batch bool, name string) (*sqlx.DB, error) {
 	if err != nil {
 		return nil, err
 	}
-	dbx.SetMaxIdleConns(128)
-	dbx.SetMaxOpenConns(128)
+	dbx.SetMaxIdleConns(200)
+	dbx.SetMaxOpenConns(200)
 	dbx.SetConnMaxLifetime(5 * time.Minute)
 	return dbx, nil
 }
@@ -2310,7 +2322,7 @@ func (h *Handler) generateID() (int64, error) {
 
 	var updateErr error
 	for i := 0; i < 100; i++ {
-		res, err := h.DB[0].Exec("UPDATE id_generator SET id=LAST_INSERT_ID(id+1000)")
+		res, err := h.DB[0].Exec("UPDATE id_generator SET id=LAST_INSERT_ID(id+1000000)")
 		if err != nil {
 			if merr, ok := err.(*mysql.MySQLError); ok && merr.Number == 1213 {
 				updateErr = err
@@ -2324,7 +2336,7 @@ func (h *Handler) generateID() (int64, error) {
 			return 0, err
 		}
 		IdGenerateCache.current = id + 1
-		IdGenerateCache.last = id + 1000
+		IdGenerateCache.last = id + 1000000
 		return id, nil
 	}
 
