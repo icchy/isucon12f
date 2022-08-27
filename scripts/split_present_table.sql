@@ -11,6 +11,8 @@ create table if not exists user_presents_exists
     created_at      bigint       not null,
     updated_at      bigint       not null
 );
+
+ALTER TABLE user_presents_exists ADD INDEX idx_user_presents_created_at (user_id, created_at DESC, id);
 create table if not exists user_presents_deleted
 (
     id              bigint       not null
@@ -23,8 +25,10 @@ create table if not exists user_presents_deleted
     present_message varchar(255) null comment 'プレゼントメッセージ',
     created_at      bigint       not null,
     updated_at      bigint       not null,
-    deleted_at      bigint       not null
+    deleted_at      bigint       not null,
+    INDEX (user_id)
 );
+ALTER TABLE user_presents_deleted ADD INDEX idx_user_presents_user_id (user_id);
 
 INSERT INTO user_presents_exists
 (id, user_id, sent_at, item_type, item_id, amount, present_message, created_at, updated_at)
