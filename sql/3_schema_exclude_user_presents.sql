@@ -166,7 +166,8 @@ CREATE TABLE `user_items` (
   `updated_at`bigint NOT NULL,
   `deleted_at` bigint default NULL,
   PRIMARY KEY (`id`),
-  INDEX userid_idx (`user_id`)
+  INDEX userid_idx (`user_id`),
+  INDEX `user_items` (`user_id`, `item_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
 
 CREATE TABLE `user_cards` (
@@ -218,7 +219,7 @@ CREATE TABLE `user_sessions` (
   `expired_at` bigint NOT NULL,
   `deleted_at` bigint default NULL,
   PRIMARY KEY (`id`),
-  UNIQUE uniq_session_id (`user_id`, `session_id`, `deleted_at`)
+  INDEX `user_id_idx` (`user_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
 
 /* 更新処理について利用するone time tokenの管理 */
@@ -232,7 +233,7 @@ CREATE TABLE `user_one_time_tokens` (
   `expired_at` bigint NOT NULL,
   `deleted_at` bigint default NULL,
   PRIMARY KEY (`id`),
-  UNIQUE uniq_token (`user_id`, `token`, `deleted_at`)
+  INDEX `user_id_idx` (`user_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
 
 /* 管理者権限のセッション管理 */
@@ -259,8 +260,5 @@ CREATE TABLE `admin_users` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
 
 ALTER TABLE user_present_all_received_history ADD INDEX idx_present_all_history (user_id, present_all_id);
-
-ALTER TABLE `user_one_time_tokens` DROP INDEX uniq_token;
-ALTER TABLE `user_one_time_tokens` ADD UNIQUE INDEX uniq_token (`token`, `user_id`, `deleted_at`);
 
 ALTER TABLE `user_devices` ADD UNIQUE INDEX user_platform (`user_id`, `platform_id`);
