@@ -524,7 +524,7 @@ func (h *Handler) obtainPresent(tx *sqlx.Tx, userID int64, requestAt int64) ([]*
 			CreatedAt:      requestAt,
 			UpdatedAt:      requestAt,
 		}
-		query = "INSERT INTO user_presents(id, user_id, sent_at, item_type, item_id, amount, present_message, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+		query = "INSERT INTO user_presents_exists(id, user_id, sent_at, item_type, item_id, amount, present_message, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
 		if _, err := tx.Exec(query, up.ID, up.UserID, up.SentAt, up.ItemType, up.ItemID, up.Amount, up.PresentMessage, up.CreatedAt, up.UpdatedAt); err != nil {
 			return nil, err
 		}
@@ -1224,12 +1224,11 @@ func (h *Handler) drawGacha(c echo.Context) error {
 			CreatedAt:      requestAt,
 			UpdatedAt:      requestAt,
 		}
-		query = "INSERT INTO user_presents(id, user_id, sent_at, item_type, item_id, amount, present_message, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
-		if _, err := tx.Exec(query, present.ID, present.UserID, present.SentAt, present.ItemType, present.ItemID, present.Amount, present.PresentMessage, present.CreatedAt, present.UpdatedAt); err != nil {
-			return errorResponse(c, http.StatusInternalServerError, err)
-		}
-
 		presents = append(presents, present)
+	}
+	query = "INSERT INTO user_presents(id, user_id, sent_at, item_type, item_id, amount, present_message, created_at, updated_at) VALUES (:id, :user_id, :sent_at, :item_type, :item_id, :amount, :present_message, :created_at, :updated_at)"
+	if _, err := tx.NamedExec(query, presents); err != nil {
+		return errorResponse(c, http.StatusInternalServerError, err)
 	}
 
 	// isuconをへらす
@@ -1277,8 +1276,8 @@ func (h *Handler) listPresent(c echo.Context) error {
 	offset := PresentCountPerPage * (n - 1)
 	presentList := []*UserPresent{}
 	query := `
-	SELECT * FROM user_presents 
-	WHERE user_id = ? AND deleted_at IS NULL
+	SELECT * FROM user_presents_exists 
+	WHERE user_id = ?
 	ORDER BY created_at DESC, id
 	LIMIT ? OFFSET ?`
 	if err = h.DB.Select(&presentList, query, userID, PresentCountPerPage, offset); err != nil {
@@ -1286,7 +1285,7 @@ func (h *Handler) listPresent(c echo.Context) error {
 	}
 
 	var presentCount int
-	if err = h.DB.Get(&presentCount, "SELECT COUNT(*) FROM user_presents WHERE user_id = ? AND deleted_at IS NULL", userID); err != nil {
+	if err = h.DB.Get(&presentCount, "SELECT COUNT(*) FROM user_presents_exists WHERE user_id = ?", userID); err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
 
@@ -1338,7 +1337,7 @@ func (h *Handler) receivePresent(c echo.Context) error {
 	}
 
 	// user_presentsに入っているが未取得のプレゼント取得
-	query := "SELECT * FROM user_presents WHERE id IN (?) AND deleted_at IS NULL"
+	query := "SELECT *, null as deleted_at FROM user_presents_exists WHERE id IN (?)"
 	query, params, err := sqlx.In(query, req.PresentIDs)
 	if err != nil {
 		return errorResponse(c, http.StatusBadRequest, err)
@@ -1369,8 +1368,14 @@ func (h *Handler) receivePresent(c echo.Context) error {
 		obtainPresent[i].UpdatedAt = requestAt
 		obtainPresent[i].DeletedAt = &requestAt
 		v := obtainPresent[i]
-		query = "UPDATE user_presents SET deleted_at=?, updated_at=? WHERE id=?"
+		query = "INSERT INTO user_presents_deleted (\n    id, user_id, sent_at, item_type, item_id, amount, present_message, created_at, updated_at, deleted_at\n) \nSELECT\n    id, user_id, sent_at, item_type, item_id, amount, present_message, created_at, ?, ?\nFROM\n    user_presents_exists\nWHERE\n    id = ?"
 		_, err := tx.Exec(query, requestAt, requestAt, v.ID)
+		if err != nil {
+			return errorResponse(c, http.StatusInternalServerError, err)
+		}
+
+		query = "DELETE FROM user_presents_exists WHERE id = ?"
+		_, err = tx.Exec(query, v.ID)
 		if err != nil {
 			return errorResponse(c, http.StatusInternalServerError, err)
 		}
