@@ -66,7 +66,8 @@ func clearIdGenerateCache() {
 }
 
 type Handler struct {
-	DB *sqlx.DB
+	DB  *sqlx.DB
+	DB2 *sqlx.DB
 }
 
 func main() {
@@ -90,10 +91,17 @@ func main() {
 	}
 	defer dbx.Close()
 
+	db2, err := connectDB2(false)
+	if err != nil {
+		e.Logger.Fatalf("failed to connect to db: %v", err)
+	}
+	defer db2.Close()
+
 	// setting server
 	e.Server.Addr = fmt.Sprintf(":%v", "8080")
 	h := &Handler{
-		DB: dbx,
+		DB:  dbx,
+		DB2: db2,
 	}
 
 	// e.Use(middleware.CORS())
@@ -188,6 +196,27 @@ func connectDB(batch bool) (*sqlx.DB, error) {
 	return dbx, nil
 }
 
+func connectDB2(batch bool) (*sqlx.DB, error) {
+	dsn := fmt.Sprintf(
+		"%s:%s@tcp(%s:%s)/%s?charset=utf8mb4&parseTime=true&loc=%s&multiStatements=%t&interpolateParams=true",
+		getEnv("ISUCON_DB2_USER", "isucon"),
+		getEnv("ISUCON_DB2_PASSWORD", "isucon"),
+		getEnv("ISUCON_DB2_HOST", "127.0.0.1"),
+		getEnv("ISUCON_DB2_PORT", "3306"),
+		getEnv("ISUCON_DB2_NAME", "isucon"),
+		"Asia%2FTokyo",
+		batch,
+	)
+	dbx, err := sqlx.Open("mysql", dsn)
+	if err != nil {
+		return nil, err
+	}
+	dbx.SetMaxIdleConns(64)
+	dbx.SetMaxOpenConns(64)
+	dbx.SetConnMaxLifetime(5 * time.Minute)
+	return dbx, nil
+}
+
 // adminMiddleware
 func (h *Handler) adminMiddleware(next echo.HandlerFunc) echo.HandlerFunc {
 	return func(c echo.Context) error {
@@ -214,7 +243,7 @@ func (h *Handler) apiMiddleware(next echo.HandlerFunc) echo.HandlerFunc {
 		// マスタ確認
 		query := "SELECT * FROM version_masters WHERE status=1"
 		masterVersion := new(VersionMaster)
-		if err := h.DB.Get(masterVersion, query); err != nil {
+		if err := h.DB2.Get(masterVersion, query); err != nil {
 			if err == sql.ErrNoRows {
 				return errorResponse(c, http.StatusNotFound, fmt.Errorf("active master version is not found"))
 			}
@@ -409,7 +438,7 @@ func (h *Handler) obtainLoginBonus(tx *sqlx.Tx, userID int64, requestAt int64) (
 	// login bonus masterから有効なログインボーナスを取得
 	loginBonuses := make([]*LoginBonusMaster, 0)
 	query := "SELECT * FROM login_bonus_masters WHERE start_at <= ? AND end_at >= ?"
-	if err := tx.Select(&loginBonuses, query, requestAt, requestAt); err != nil {
+	if err := h.DB2.Select(&loginBonuses, query, requestAt, requestAt); err != nil {
 		return nil, err
 	}
 
@@ -458,7 +487,7 @@ func (h *Handler) obtainLoginBonus(tx *sqlx.Tx, userID int64, requestAt int64) (
 		// 今回付与するリソース取得
 		rewardItem := new(LoginBonusRewardMaster)
 		query = "SELECT * FROM login_bonus_reward_masters WHERE login_bonus_id=? AND reward_sequence=?"
-		if err := tx.Get(rewardItem, query, bonus.ID, userBonus.LastRewardSequence); err != nil {
+		if err := h.DB2.Get(rewardItem, query, bonus.ID, userBonus.LastRewardSequence); err != nil {
 			if err == sql.ErrNoRows {
 				return nil, ErrLoginBonusRewardNotFound
 			}
@@ -493,7 +522,7 @@ func (h *Handler) obtainLoginBonus(tx *sqlx.Tx, userID int64, requestAt int64) (
 func (h *Handler) obtainPresent(tx *sqlx.Tx, userID int64, requestAt int64) ([]*UserPresent, error) {
 	normalPresents := make([]*PresentAllMaster, 0)
 	query := "SELECT * FROM present_all_masters WHERE registered_start_at <= ? AND registered_end_at >= ?"
-	if err := tx.Select(&normalPresents, query, requestAt, requestAt); err != nil {
+	if err := h.DB2.Select(&normalPresents, query, requestAt, requestAt); err != nil {
 		return nil, err
 	}
 
@@ -604,7 +633,7 @@ func (h *Handler) obtainItem(tx *sqlx.Tx, userID, itemID int64, itemType int, ob
 	case 2: // card(ハンマー)
 		query := "SELECT * FROM item_masters WHERE id=? AND item_type=?"
 		item := new(ItemMaster)
-		if err := tx.Get(item, query, itemID, itemType); err != nil {
+		if err := h.DB2.Get(item, query, itemID, itemType); err != nil {
 			if err == sql.ErrNoRows {
 				return nil, nil, nil, ErrItemNotFound
 			}
@@ -634,7 +663,7 @@ func (h *Handler) obtainItem(tx *sqlx.Tx, userID, itemID int64, itemType int, ob
 	case 3, 4: // 強化素材
 		query := "SELECT * FROM item_masters WHERE id=? AND item_type=?"
 		item := new(ItemMaster)
-		if err := tx.Get(item, query, itemID, itemType); err != nil {
+		if err := h.DB2.Get(item, query, itemID, itemType); err != nil {
 			if err == sql.ErrNoRows {
 				return nil, nil, nil, ErrItemNotFound
 			}
@@ -784,7 +813,7 @@ func (h *Handler) createUser(c echo.Context) error {
 	// 初期デッキ付与
 	initCard := new(ItemMaster)
 	query = "SELECT * FROM item_masters WHERE id=?"
-	if err = tx.Get(initCard, query, 2); err != nil {
+	if err = h.DB2.Get(initCard, query, 2); err != nil {
 		if err == sql.ErrNoRows {
 			return errorResponse(c, http.StatusNotFound, ErrItemNotFound)
 		}
@@ -1037,7 +1066,7 @@ func (h *Handler) listGacha(c echo.Context) error {
 
 	gachaMasterList := []*GachaMaster{}
 	query := "SELECT * FROM gacha_masters WHERE start_at <= ? AND end_at >= ? ORDER BY display_order ASC"
-	err = h.DB.Select(&gachaMasterList, query, requestAt, requestAt)
+	err = h.DB2.Select(&gachaMasterList, query, requestAt, requestAt)
 	if err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
@@ -1053,7 +1082,7 @@ func (h *Handler) listGacha(c echo.Context) error {
 	query = "SELECT * FROM gacha_item_masters WHERE gacha_id=? ORDER BY id ASC"
 	for _, v := range gachaMasterList {
 		var gachaItem []*GachaItemMaster
-		err = h.DB.Select(&gachaItem, query, v.ID)
+		err = h.DB2.Select(&gachaItem, query, v.ID)
 		if err != nil {
 			return errorResponse(c, http.StatusInternalServerError, err)
 		}
@@ -1175,7 +1204,7 @@ func (h *Handler) drawGacha(c echo.Context) error {
 	// gachaIDからガチャマスタの取得
 	query = "SELECT * FROM gacha_masters WHERE id=? AND start_at <= ? AND end_at >= ?"
 	gachaInfo := new(GachaMaster)
-	if err = h.DB.Get(gachaInfo, query, gachaID, requestAt, requestAt); err != nil {
+	if err = h.DB2.Get(gachaInfo, query, gachaID, requestAt, requestAt); err != nil {
 		if sql.ErrNoRows == err {
 			return errorResponse(c, http.StatusNotFound, fmt.Errorf("not found gacha"))
 		}
@@ -1184,7 +1213,7 @@ func (h *Handler) drawGacha(c echo.Context) error {
 
 	// gachaItemMasterからアイテムリスト取得
 	gachaItemList := make([]*GachaItemMaster, 0)
-	err = h.DB.Select(&gachaItemList, "SELECT * FROM gacha_item_masters WHERE gacha_id=? ORDER BY id ASC", gachaID)
+	err = h.DB2.Select(&gachaItemList, "SELECT * FROM gacha_item_masters WHERE gacha_id=? ORDER BY id ASC", gachaID)
 	if err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
@@ -1194,7 +1223,7 @@ func (h *Handler) drawGacha(c echo.Context) error {
 
 	// weightの合計値を算出
 	var sum int64
-	err = h.DB.Get(&sum, "SELECT SUM(weight) FROM gacha_item_masters WHERE gacha_id=?", gachaID)
+	err = h.DB2.Get(&sum, "SELECT SUM(weight) FROM gacha_item_masters WHERE gacha_id=?", gachaID)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return errorResponse(c, http.StatusNotFound, err)
@@ -1558,17 +1587,40 @@ func (h *Handler) addExpToCard(c echo.Context) error {
 
 	// get target card
 	card := new(TargetUserCardData)
-	query := `
-	SELECT uc.id , uc.user_id , uc.card_id , uc.amount_per_sec , uc.level, uc.total_exp, im.amount_per_sec as 'base_amount_per_sec', im.max_level , im.max_amount_per_sec , im.base_exp_per_level
-	FROM user_cards as uc
-	INNER JOIN item_masters as im ON uc.card_id = im.id
-	WHERE uc.id = ? AND uc.user_id=?
-	`
-	if err = h.DB.Get(card, query, cardID, userID); err != nil {
-		if err == sql.ErrNoRows {
-			return errorResponse(c, http.StatusNotFound, err)
+
+	userCards := []*UserCard{}
+	if err = h.DB.Select(&userCards, "SELECT * FROM user_cards"); err != nil {
+		return err
+	}
+
+	itemMasters := []*ItemMaster{}
+	if err = h.DB2.Select(&itemMasters, "SELECT * FROM item_masters"); err != nil {
+		return err
+	}
+
+	hit := false
+	for _, uc := range userCards {
+		for _, im := range itemMasters {
+			if uc.CardID == im.ID {
+				if uc.ID == cardID && uc.UserID == userID {
+					hit = true
+
+					card.ID = uc.ID
+					card.UserID = uc.UserID
+					card.AmountPerSec = uc.AmountPerSec
+					card.Level = uc.Level
+					card.TotalExp = int(uc.TotalExp)
+					card.BaseAmountPerSec = *im.AmountPerSec
+					card.MaxLevel = *im.MaxLevel
+					card.MaxAmountPerSec = *im.MaxAmountPerSec
+					card.BaseExpPerLevel = *im.BaseExpPerLevel
+				}
+			}
 		}
-		return errorResponse(c, http.StatusInternalServerError, err)
+	}
+
+	if !hit {
+		return errorResponse(c, http.StatusNotFound, sql.ErrNoRows)
 	}
 
 	if card.Level == card.MaxLevel {
@@ -1577,19 +1629,36 @@ func (h *Handler) addExpToCard(c echo.Context) error {
 
 	// 消費アイテムの所持チェック
 	items := make([]*ConsumeUserItemData, 0)
-	query = `
-	SELECT ui.id, ui.user_id, ui.item_id, ui.item_type, ui.amount, ui.created_at, ui.updated_at, im.gained_exp
-	FROM user_items as ui
-	INNER JOIN item_masters as im ON ui.item_id = im.id
-	WHERE ui.item_type = 3 AND ui.id=? AND ui.user_id=?
-	`
+
+	userItems := []*UserItem{}
+	if err = h.DB.Select(&userItems, "SELECT * FROM user_items"); err != nil {
+		return err
+	}
+
 	for _, v := range req.Items {
+		hit = false
 		item := new(ConsumeUserItemData)
-		if err = h.DB.Get(item, query, v.ID, userID); err != nil {
-			if err == sql.ErrNoRows {
-				return errorResponse(c, http.StatusNotFound, err)
+
+		for _, ui := range userItems {
+			for _, im := range itemMasters {
+				if ui.ItemID == im.ID {
+					if ui.ItemType == 3 && ui.ID == v.ID && ui.UserID == userID {
+						hit = true
+						item.ID = ui.ID
+						item.UserID = ui.UserID
+						item.ItemID = ui.ItemID
+						item.ItemType = ui.ItemType
+						item.Amount = ui.Amount
+						item.CreatedAt = ui.CreatedAt
+						item.UpdatedAt = ui.UpdatedAt
+						item.GainedExp = *im.GainedExp
+					}
+				}
 			}
-			return errorResponse(c, http.StatusInternalServerError, err)
+		}
+
+		if !hit {
+			return errorResponse(c, http.StatusNotFound, sql.ErrNoRows)
 		}
 
 		if v.Amount > item.Amount {
@@ -1625,7 +1694,7 @@ func (h *Handler) addExpToCard(c echo.Context) error {
 	defer tx.Rollback() //nolint:errcheck
 
 	// cardのlvと経験値の更新、itemの消費
-	query = "UPDATE user_cards SET amount_per_sec=?, level=?, total_exp=?, updated_at=? WHERE id=?"
+	query := "UPDATE user_cards SET amount_per_sec=?, level=?, total_exp=?, updated_at=? WHERE id=?"
 	if _, err = tx.Exec(query, card.AmountPerSec, card.Level, card.TotalExp, requestAt, card.ID); err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
