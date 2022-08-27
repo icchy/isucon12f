@@ -147,7 +147,7 @@ func StartProfile() {
 	}
 	pprof.StopCPUProfile()
 	var err error
-	cpuProfiler.f, err = os.Create(fmt.Sprintf("/tmp/profile-%s.pprof", time.Now().Format("20060102 15:04:05")))
+	cpuProfiler.f, err = os.Create(fmt.Sprintf("/tmp/profile-%s.pprof", time.Now().Format("20060102-15:04:05")))
 	if err != nil {
 		log.Printf("failed to create profile file: %v", err)
 		return
@@ -688,6 +688,11 @@ func initialize(c echo.Context) error {
 
 	StartProfile()
 	clearIdGenerateCache()
+
+	go func() {
+		time.Sleep(70 * time.Second)
+		StopProfile()
+	}()
 
 	return successResponse(c, &InitializeResponse{
 		Language: "go",
