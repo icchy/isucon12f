@@ -169,7 +169,7 @@ func StopProfile() {
 
 func connectDB(batch bool) (*sqlx.DB, error) {
 	dsn := fmt.Sprintf(
-		"%s:%s@tcp(%s:%s)/%s?charset=utf8mb4&parseTime=true&loc=%s&multiStatements=%t",
+		"%s:%s@tcp(%s:%s)/%s?charset=utf8mb4&parseTime=true&loc=%s&multiStatements=%t&interpolateParams=true",
 		getEnv("ISUCON_DB_USER", "isucon"),
 		getEnv("ISUCON_DB_PASSWORD", "isucon"),
 		getEnv("ISUCON_DB_HOST", "127.0.0.1"),
@@ -182,6 +182,9 @@ func connectDB(batch bool) (*sqlx.DB, error) {
 	if err != nil {
 		return nil, err
 	}
+	dbx.SetMaxIdleConns(64)
+	dbx.SetMaxOpenConns(64)
+	dbx.SetConnMaxLifetime(5 * time.Minute)
 	return dbx, nil
 }
 
