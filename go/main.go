@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/go-sql-driver/mysql"
@@ -44,6 +45,23 @@ const (
 
 	SQLDirectory string = "../sql/"
 )
+
+// ID生成のためのキャッシュ
+// Initializeでかならずクリアする必要がある
+var (
+	IdGenerateCache struct {
+		mtx     sync.Mutex
+		current int64
+		last    int64
+	}
+)
+
+func clearIdGenerateCache() {
+	IdGenerateCache.mtx.Lock()
+	defer IdGenerateCache.mtx.Unlock()
+	IdGenerateCache.current = 0
+	IdGenerateCache.last = 0
+}
 
 type Handler struct {
 	DB *sqlx.DB
@@ -629,6 +647,8 @@ func initialize(c echo.Context) error {
 		c.Logger().Errorf("Failed to initialize %s: %v", string(out), err)
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
+
+	clearIdGenerateCache()
 
 	return successResponse(c, &InitializeResponse{
 		Language: "go",
@@ -1895,9 +1915,17 @@ func noContentResponse(c echo.Context, status int) error {
 
 // generateID uniqueなIDを生成する
 func (h *Handler) generateID() (int64, error) {
+	IdGenerateCache.mtx.Lock()
+	defer IdGenerateCache.mtx.Unlock()
+
+	if IdGenerateCache.current < IdGenerateCache.last {
+		IdGenerateCache.current += 1
+		return IdGenerateCache.current - 1, nil
+	}
+
 	var updateErr error
 	for i := 0; i < 100; i++ {
-		res, err := h.DB.Exec("UPDATE id_generator SET id=LAST_INSERT_ID(id+1)")
+		res, err := h.DB.Exec("UPDATE id_generator SET id=LAST_INSERT_ID(id+1000)")
 		if err != nil {
 			if merr, ok := err.(*mysql.MySQLError); ok && merr.Number == 1213 {
 				updateErr = err
@@ -1910,6 +1938,8 @@ func (h *Handler) generateID() (int64, error) {
 		if err != nil {
 			return 0, err
 		}
+		IdGenerateCache.current = id + 1
+		IdGenerateCache.last = id + 1000
 		return id, nil
 	}
 
