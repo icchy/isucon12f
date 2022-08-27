@@ -75,7 +75,7 @@ func main() {
 	time.Local = time.FixedZone("Local", 9*60*60)
 
 	e := echo.New()
-	e.Use(middleware.Logger())
+	//e.Use(middleware.Logger())
 	e.Use(middleware.Recover())
 	e.Use(middleware.CORSWithConfig(middleware.CORSConfig{
 		AllowOrigins: []string{"*"},
@@ -182,8 +182,8 @@ func connectDB(batch bool) (*sqlx.DB, error) {
 	if err != nil {
 		return nil, err
 	}
-	dbx.SetMaxIdleConns(64)
-	dbx.SetMaxOpenConns(64)
+	dbx.SetMaxIdleConns(128)
+	dbx.SetMaxOpenConns(128)
 	dbx.SetConnMaxLifetime(5 * time.Minute)
 	return dbx, nil
 }
@@ -412,20 +412,36 @@ func (h *Handler) obtainLoginBonus(tx *sqlx.Tx, userID int64, requestAt int64) (
 	if err := tx.Select(&loginBonuses, query, requestAt, requestAt); err != nil {
 		return nil, err
 	}
+	// TODO: Check It
+	if len(loginBonuses) == 0 {
+		return nil, nil
+	}
 
-	sendLoginBonuses := make([]*UserLoginBonus, 0)
+	loginBonusesIds := make([]int64, 0)
+	for _, loginBonus := range loginBonuses {
+		loginBonusesIds = append(loginBonusesIds, loginBonus.ID)
+	}
+	// ボーナスの進捗取得
+	fetchedUserBonuses := make([]*UserLoginBonus, 0)
+	userBonusesMap := make(map[int64]*UserLoginBonus, 0)
+	query, params, err := sqlx.In("SELECT * FROM user_login_bonuses WHERE user_id=? AND login_bonus_id IN (?)", userID, loginBonusesIds)
+	if err != nil {
+		return nil, err
+	}
+	if err := tx.Select(&fetchedUserBonuses, query, params...); err != nil {
+		return nil, err
+	}
+	for _, u := range fetchedUserBonuses {
+		userBonusesMap[u.LoginBonusID] = u
+	}
+	userBonuses := make([]*UserLoginBonus, 0, len(loginBonuses))
+	loginBonusIds := make([]int64, 0)
+	loginBonusSeqs := make([]int, 0)
 
 	for _, bonus := range loginBonuses {
-		initBonus := false
 		// ボーナスの進捗取得
-		userBonus := new(UserLoginBonus)
-		query = "SELECT * FROM user_login_bonuses WHERE user_id=? AND login_bonus_id=?"
-		if err := tx.Get(userBonus, query, userID, bonus.ID); err != nil {
-			if err != sql.ErrNoRows {
-				return nil, err
-			}
-			initBonus = true
-
+		userBonus, ok := userBonusesMap[bonus.ID]
+		if !ok {
 			ubID, err := h.generateID()
 			if err != nil {
 				return nil, err
@@ -454,39 +470,55 @@ func (h *Handler) obtainLoginBonus(tx *sqlx.Tx, userID int64, requestAt int64) (
 			}
 		}
 		userBonus.UpdatedAt = requestAt
+		userBonuses = append(userBonuses, userBonus)
 
-		// 今回付与するリソース取得
-		rewardItem := new(LoginBonusRewardMaster)
-		query = "SELECT * FROM login_bonus_reward_masters WHERE login_bonus_id=? AND reward_sequence=?"
-		if err := tx.Get(rewardItem, query, bonus.ID, userBonus.LastRewardSequence); err != nil {
-			if err == sql.ErrNoRows {
-				return nil, ErrLoginBonusRewardNotFound
-			}
-			return nil, err
+		loginBonusIds = append(loginBonusIds, bonus.ID)
+		loginBonusSeqs = append(loginBonusSeqs, userBonus.LastRewardSequence)
+	}
+
+	rewardItems := []*LoginBonusRewardMaster{}
+	params = []interface{}{}
+	query = "SELECT * FROM login_bonus_reward_masters WHERE (login_bonus_id, reward_sequence) IN ("
+	for i, loginBounusID := range loginBonusIds {
+		// 上の2行書いたら下はGitHub Copilotが出した
+		if i > 0 {
+			query += ","
 		}
+		query += "(?,?)"
+		params = append(params, loginBounusID, loginBonusSeqs[i])
+	}
+	query += ")"
+	if err := tx.Select(&rewardItems, query, params...); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, ErrLoginBonusRewardNotFound
+		}
+		return nil, err
+	}
+	rewardItemMaps := make(map[string]*LoginBonusRewardMaster, 0)
+	for _, r := range rewardItems {
+		rewardItemMaps[fmt.Sprintf("%d-%d", r.LoginBonusID, r.RewardSequence)] = r
+	}
 
+	for i := range userBonuses {
+		userBonus := userBonuses[i]
+		// 今回付与するリソース取得
+		rewardItem := rewardItemMaps[fmt.Sprintf("%d-%d", userBonus.LoginBonusID, userBonus.LastRewardSequence)]
+		if rewardItem == nil {
+			return nil, ErrLoginBonusRewardNotFound
+		}
 		_, _, _, err := h.obtainItem(tx, userID, rewardItem.ItemID, rewardItem.ItemType, rewardItem.Amount, requestAt)
 		if err != nil {
 			return nil, err
 		}
-
-		// 進捗の保存
-		if initBonus {
-			query = "INSERT INTO user_login_bonuses(id, user_id, login_bonus_id, last_reward_sequence, loop_count, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
-			if _, err = tx.Exec(query, userBonus.ID, userBonus.UserID, userBonus.LoginBonusID, userBonus.LastRewardSequence, userBonus.LoopCount, userBonus.CreatedAt, userBonus.UpdatedAt); err != nil {
-				return nil, err
-			}
-		} else {
-			query = "UPDATE user_login_bonuses SET last_reward_sequence=?, loop_count=?, updated_at=? WHERE id=?"
-			if _, err = tx.Exec(query, userBonus.LastRewardSequence, userBonus.LoopCount, userBonus.UpdatedAt, userBonus.ID); err != nil {
-				return nil, err
-			}
-		}
-
-		sendLoginBonuses = append(sendLoginBonuses, userBonus)
 	}
 
-	return sendLoginBonuses, nil
+	// 進捗の保存
+	query = "INSERT INTO user_login_bonuses(id, user_id, login_bonus_id, last_reward_sequence, loop_count, created_at, updated_at)\nVALUES (:id, :user_id, :login_bonus_id, :last_reward_sequence, :loop_count, :created_at, :updated_at) as new\nON DUPLICATE KEY UPDATE\n                     last_reward_sequence = new.last_reward_sequence,\n                     loop_count = new.loop_count,\n                     updated_at = new.updated_at\n"
+	if _, err = tx.NamedExec(query, userBonuses); err != nil {
+		return nil, err
+	}
+
+	return userBonuses, nil
 }
 
 // obtainPresent プレゼント付与処理
@@ -699,8 +731,12 @@ func (h *Handler) obtainItem(tx *sqlx.Tx, userID, itemID int64, itemType int, ob
 
 		query = "UPDATE users SET isu_coin=? WHERE id=?"
 		totalCoin := user.IsuCoin + obtainAmount
-		if _, err := tx.Exec(query, totalCoin, user.ID); err != nil {
+		if ret, err := tx.Exec(query, totalCoin, user.ID); err != nil {
 			return nil, nil, nil, err
+		} else if rows, err := ret.RowsAffected(); err != nil {
+			return nil, nil, nil, err
+		} else if rows == 0 {
+			return nil, nil, nil, ErrUserNotFound
 		}
 		obtainCoins = append(obtainCoins, obtainAmount)
 
@@ -767,7 +803,7 @@ func (h *Handler) obtainItem(tx *sqlx.Tx, userID, itemID int64, itemType int, ob
 				CreatedAt: requestAt,
 				UpdatedAt: requestAt,
 			}
-			query = "INSERT INTO user_items(id, user_id, item_id, item_type, amount, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
+			query = "INSERT INTO user_items(id, user_id, item_id, item_type, amount, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)\n\n"
 			if _, err := tx.Exec(query, uitem.ID, userID, uitem.ItemID, uitem.ItemType, uitem.Amount, requestAt, requestAt); err != nil {
 				return nil, nil, nil, err
 			}

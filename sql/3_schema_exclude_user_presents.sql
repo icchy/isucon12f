@@ -259,3 +259,8 @@ CREATE TABLE `admin_users` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
 
 ALTER TABLE user_present_all_received_history ADD INDEX idx_present_all_history (user_id, present_all_id);
+
+ALTER TABLE `user_one_time_tokens` DROP INDEX uniq_token;
+ALTER TABLE `user_one_time_tokens` ADD UNIQUE INDEX uniq_token (`token`, `user_id`, `deleted_at`);
+
+ALTER TABLE `user_devices` ADD UNIQUE INDEX user_platform (`user_id`, `platform_id`);
