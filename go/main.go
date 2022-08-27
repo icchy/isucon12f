@@ -5,12 +5,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"math"
 	"math/rand"
 	"net/http"
 	"os"
 	"os/exec"
+	"runtime/pprof"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/go-sql-driver/mysql"
@@ -109,6 +112,41 @@ func main() {
 
 	e.Logger.Infof("Start server: address=%s", e.Server.Addr)
 	e.Logger.Error(e.StartServer(e.Server))
+}
+
+var cpuProfiler struct {
+	mtx sync.Mutex
+	f   *os.File
+}
+
+func StartProfile() {
+	cpuProfiler.mtx.Lock()
+	defer cpuProfiler.mtx.Unlock()
+	if cpuProfiler.f != nil {
+		if err := cpuProfiler.f.Close(); err != nil {
+			log.Printf("failed to close profile file: %v", err)
+		}
+	}
+	pprof.StopCPUProfile()
+	var err error
+	cpuProfiler.f, err = os.Create(fmt.Sprintf("/tmp/profile-%s.pprof", time.Now().Format("20060102 15:04:05")))
+	if err != nil {
+		log.Printf("failed to create profile file: %v", err)
+		return
+	}
+	pprof.StartCPUProfile(cpuProfiler.f)
+}
+
+func StopProfile() {
+	cpuProfiler.mtx.Lock()
+	defer cpuProfiler.mtx.Unlock()
+	pprof.StopCPUProfile()
+	if cpuProfiler.f != nil {
+		if err := cpuProfiler.f.Close(); err != nil {
+			log.Printf("failed to close profile file: %v", err)
+		}
+	}
+	cpuProfiler.f = nil
 }
 
 func connectDB(batch bool) (*sqlx.DB, error) {
@@ -629,6 +667,8 @@ func initialize(c echo.Context) error {
 		c.Logger().Errorf("Failed to initialize %s: %v", string(out), err)
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
+
+	StartProfile()
 
 	return successResponse(c, &InitializeResponse{
 		Language: "go",
