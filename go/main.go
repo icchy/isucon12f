@@ -1360,6 +1360,7 @@ func (h *Handler) receivePresent(c echo.Context) error {
 	defer tx.Rollback() //nolint:errcheck
 
 	// 配布処理
+	ids := []int64{}
 	for i := range obtainPresent {
 		if obtainPresent[i].DeletedAt != nil {
 			return errorResponse(c, http.StatusInternalServerError, fmt.Errorf("received present"))
@@ -1368,17 +1369,30 @@ func (h *Handler) receivePresent(c echo.Context) error {
 		obtainPresent[i].UpdatedAt = requestAt
 		obtainPresent[i].DeletedAt = &requestAt
 		v := obtainPresent[i]
-		query = "INSERT INTO user_presents_deleted (\n    id, user_id, sent_at, item_type, item_id, amount, present_message, created_at, updated_at, deleted_at\n) \nSELECT\n    id, user_id, sent_at, item_type, item_id, amount, present_message, created_at, ?, ?\nFROM\n    user_presents_exists\nWHERE\n    id = ?"
-		_, err := tx.Exec(query, requestAt, requestAt, v.ID)
-		if err != nil {
-			return errorResponse(c, http.StatusInternalServerError, err)
-		}
 
-		query = "DELETE FROM user_presents_exists WHERE id = ?"
-		_, err = tx.Exec(query, v.ID)
-		if err != nil {
-			return errorResponse(c, http.StatusInternalServerError, err)
-		}
+		ids = append(ids, v.ID)
+	}
+
+	query, args, err := sqlx.In("INSERT INTO user_presents_deleted (\n    id, user_id, sent_at, item_type, item_id, amount, present_message, created_at, updated_at, deleted_at\n) \nSELECT\n    id, user_id, sent_at, item_type, item_id, amount, present_message, created_at, ?, ?\nFROM\n    user_presents_exists\nWHERE\n    id IN (?)", requestAt, requestAt, ids)
+	if err != nil {
+		return err
+	}
+	_, err = tx.Exec(query, args...)
+	if err != nil {
+		return errorResponse(c, http.StatusInternalServerError, err)
+	}
+
+	query, args, err = sqlx.In("DELETE FROM user_presents_exists WHERE id IN (?)", ids)
+	if err != nil {
+		return err
+	}
+	_, err = tx.Exec(query, args...)
+	if err != nil {
+		return errorResponse(c, http.StatusInternalServerError, err)
+	}
+
+	for i := range obtainPresent {
+		v := obtainPresent[i]
 
 		_, _, _, err = h.obtainItem(tx, v.UserID, v.ItemID, v.ItemType, int64(v.Amount), requestAt)
 		if err != nil {
