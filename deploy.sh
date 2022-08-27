@@ -1,6 +1,6 @@
 #!/bin/bash
 
-DEPLOY_HOST=i2
+DEPLOY_HOST=i1
 
 (cd go && GOOS=linux GOARCH=amd64 go build -o ../webapp)
 ssh ${DEPLOY_HOST} sh -c "mkdir -p /tmp/webapp"
