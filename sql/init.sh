@@ -26,7 +26,12 @@ mysql -u"$ISUCON_DB_USER" \
 		--port "$ISUCON_DB_PORT" \
 		"$ISUCON_DB_NAME" < 4_alldata_exclude_user_presents.sql
 
-echo "delete from user_presents where id > 100000000000" | mysql -u"$ISUCON_DB_USER" \
+echo "delete from user_presents_exists where id > 100000000000" | mysql -u"$ISUCON_DB_USER" \
+		-p"$ISUCON_DB_PASSWORD" \
+		--host "$ISUCON_DB_HOST" \
+		--port "$ISUCON_DB_PORT" \
+		"$ISUCON_DB_NAME"
+echo "delete from user_presents_deleted where id > 100000000000" | mysql -u"$ISUCON_DB_USER" \
 		-p"$ISUCON_DB_PASSWORD" \
 		--host "$ISUCON_DB_HOST" \
 		--port "$ISUCON_DB_PORT" \
@@ -37,11 +42,23 @@ SECURE_DIR=${DIR:-/var/lib/mysql-files/}
 
 sudo cp 5_user_presents_not_receive_data.tsv ${SECURE_DIR}
 
-echo "LOAD DATA INFILE '${SECURE_DIR}5_user_presents_not_receive_data.tsv' REPLACE INTO TABLE user_presents_exists FIELDS ESCAPED BY '|' IGNORE 1 LINES ;" | mysql -u"$ISUCON_DB_USER" \
+echo "LOAD DATA INFILE '${SECURE_DIR}5_user_presents_not_receive_data.tsv' REPLACE INTO TABLE user_presents_tmp FIELDS ESCAPED BY '|' IGNORE 1 LINES ;" | mysql -u"$ISUCON_DB_USER" \
         -p"$ISUCON_DB_PASSWORD" \
         --host "$ISUCON_DB_HOST" \
         --port "$ISUCON_DB_PORT" \
         "$ISUCON_DB_NAME" 
+
+echo "LOAD DATA INFILE '${SECURE_DIR}5_user_presents_not_receive_data.tsv' REPLACE INTO TABLE user_presents_exists FIELDS ESCAPED BY '|' IGNORE 1 LINES ;" | mysql -u"$ISUCON_DB_USER" \
+        -p"$ISUCON_DB_PASSWORD" \
+        --host "$ISUCON_DB_HOST" \
+        --port "$ISUCON_DB_PORT" \
+        "$ISUCON_DB_NAME"
+
+echo "DELETE FROM user_presents_deleted WHERE id IN (SELECT id FROM user_presents_tmp)" | mysql -u"$ISUCON_DB_USER" \
+        -p"$ISUCON_DB_PASSWORD" \
+        --host "$ISUCON_DB_HOST" \
+        --port "$ISUCON_DB_PORT" \
+        "$ISUCON_DB_NAME"
 
 
 echo "set global slow_query_log_file = '/var/log/mysql/mysql-slow.log'; set global long_query_time = 0; set global slow_query_log = ON;" | mysql -u"$ISUCON_DB_USER" \
