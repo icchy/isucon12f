@@ -1370,7 +1370,7 @@ func (h *Handler) receivePresent(c echo.Context) error {
 			return errorResponse(c, http.StatusInternalServerError, err)
 		}
 
-		query = "DELETE FROM user_present_exists WHERE id = ?"
+		query = "DELETE FROM user_presents_exists WHERE id = ?"
 		_, err = tx.Exec(query, v.ID)
 		if err != nil {
 			return errorResponse(c, http.StatusInternalServerError, err)
