@@ -503,16 +503,23 @@ func (h *Handler) obtainPresent(tx *sqlx.Tx, userID int64, requestAt int64) ([]*
 	ups := []*UserPresent{}
 	histories := []*UserPresentAllReceivedHistory{}
 
+	received_histories := []*UserPresentAllReceivedHistory{}
+	query = "SELECT * FROM user_present_all_received_history WHERE user_id=?"
+	if err := tx.Select(&received_histories, query, userID); err != nil {
+		return nil, err
+	}
+
 	for _, np := range normalPresents {
-		received := new(UserPresentAllReceivedHistory)
-		query = "SELECT * FROM user_present_all_received_history WHERE user_id=? AND present_all_id=?"
-		err := tx.Get(received, query, userID, np.ID)
-		if err == nil {
+		isObtained := false
+		for _, receive := range received_histories {
+			if receive.PresentAllID == np.ID {
+				isObtained = true
+			}
+		}
+
+		if isObtained {
 			// プレゼント配布済
 			continue
-		}
-		if err != sql.ErrNoRows {
-			return nil, err
 		}
 
 		// user present boxに入れる
