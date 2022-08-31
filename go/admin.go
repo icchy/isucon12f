@@ -576,6 +576,13 @@ func (h *Handler) adminUser(c echo.Context) error {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
 
+	query = "SELECT * FROM user_presents_deleted WHERE user_id=?"
+	presents_deleted := make([]*UserPresent, 0)
+	if err = h.DB.Select(&presents_deleted, query, userID); err != nil {
+		return errorResponse(c, http.StatusInternalServerError, err)
+	}
+	presents = append(presents, presents_deleted...)
+
 	query = "SELECT * FROM user_present_all_received_history WHERE user_id=?"
 	presentHistory := make([]*UserPresentAllReceivedHistory, 0)
 	if err = h.DB.Select(&presentHistory, query, userID); err != nil {

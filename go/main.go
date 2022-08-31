@@ -88,6 +88,7 @@ func main() {
 
 	// utility
 	e.POST("/initialize", initialize)
+	e.POST("/initializeDB", initializeDB)
 	e.GET("/health", h.health)
 
 	// feature
@@ -632,7 +633,31 @@ func initialize(c echo.Context) error {
 	}
 	defer dbx.Close()
 
+	out, err := exec.Command("/bin/sh", "-c", SQLDirectory+"mysql_restore.sh").CombinedOutput()
+	if err != nil {
+		c.Logger().Errorf("Failed to initialize %s: %v", string(out), err)
+		return errorResponse(c, http.StatusInternalServerError, err)
+	}
+
+	return successResponse(c, &InitializeResponse{
+		Language: "go",
+	})
+}
+
+func initializeDB(c echo.Context) error {
+	dbx, err := connectDB(true)
+	if err != nil {
+		return errorResponse(c, http.StatusInternalServerError, err)
+	}
+	defer dbx.Close()
+
 	out, err := exec.Command("/bin/sh", "-c", SQLDirectory+"init.sh").CombinedOutput()
+	if err != nil {
+		c.Logger().Errorf("Failed to initialize %s: %v", string(out), err)
+		return errorResponse(c, http.StatusInternalServerError, err)
+	}
+
+	out, err = exec.Command("/bin/sh", "-c", SQLDirectory+"mysql_save.sh").CombinedOutput()
 	if err != nil {
 		c.Logger().Errorf("Failed to initialize %s: %v", string(out), err)
 		return errorResponse(c, http.StatusInternalServerError, err)
@@ -1222,7 +1247,7 @@ func (h *Handler) listPresent(c echo.Context) error {
 	presentList := []*UserPresent{}
 	query := `
 	SELECT * FROM user_presents 
-	WHERE user_id = ? AND deleted_at IS NULL
+	WHERE user_id = ?
 	ORDER BY created_at DESC, id
 	LIMIT ? OFFSET ?`
 	if err = h.DB.Select(&presentList, query, userID, PresentCountPerPage, offset); err != nil {
@@ -1230,7 +1255,7 @@ func (h *Handler) listPresent(c echo.Context) error {
 	}
 
 	var presentCount int
-	if err = h.DB.Get(&presentCount, "SELECT COUNT(*) FROM user_presents WHERE user_id = ? AND deleted_at IS NULL", userID); err != nil {
+	if err = h.DB.Get(&presentCount, "SELECT COUNT(*) FROM user_presents WHERE user_id = ?", userID); err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
 
@@ -1282,7 +1307,7 @@ func (h *Handler) receivePresent(c echo.Context) error {
 	}
 
 	// user_presentsに入っているが未取得のプレゼント取得
-	query := "SELECT * FROM user_presents WHERE id IN (?) AND deleted_at IS NULL"
+	query := "SELECT * FROM user_presents WHERE id IN (?)"
 	query, params, err := sqlx.In(query, req.PresentIDs)
 	if err != nil {
 		return errorResponse(c, http.StatusBadRequest, err)
@@ -1313,9 +1338,17 @@ func (h *Handler) receivePresent(c echo.Context) error {
 		obtainPresent[i].UpdatedAt = requestAt
 		obtainPresent[i].DeletedAt = &requestAt
 		v := obtainPresent[i]
+		query = "INSERT INTO user_presents_deleted (id, user_id, sent_at, item_type, item_id, amount, present_message, created_at, updated_at, deleted_at) " +
+			"SELECT (id, user_id, sent_at, item_type, item_id, amount, present_message, created_at, ?, ?) WHERE id = ?"
+
 		query = "UPDATE user_presents SET deleted_at=?, updated_at=? WHERE id=?"
 		_, err := tx.Exec(query, requestAt, requestAt, v.ID)
 		if err != nil {
+			return errorResponse(c, http.StatusInternalServerError, err)
+		}
+
+		query = "DELETE FROM user_presents WHERE id = ?"
+		if _, err := tx.Exec(query, v.ID); err != nil {
 			return errorResponse(c, http.StatusInternalServerError, err)
 		}
 
