@@ -86,6 +86,7 @@ type Handler struct {
 	DB     *sqlx.DB
 	SFNode *snowflake.Node
 	TS     *TokenStore
+	MD     *MasterData
 }
 
 func main() {
@@ -120,13 +121,18 @@ func main() {
 		DB:     dbx,
 		SFNode: node,
 		TS:     NewTokenStore(),
+		MD:     NewMasterData(),
+	}
+
+	if err := h.MD.Load(h); err != nil {
+		e.Logger.Fatalf("failed to load master data: %v", err)
 	}
 
 	// e.Use(middleware.CORS())
 	e.Use(middleware.CORSWithConfig(middleware.CORSConfig{}))
 
 	// utility
-	e.POST("/initialize", initialize)
+	e.POST("/initialize", h.initialize)
 	e.GET("/health", h.health)
 
 	// feature
@@ -200,12 +206,8 @@ func (h *Handler) apiMiddleware(next echo.HandlerFunc) echo.HandlerFunc {
 		c.Set("requestTime", requestAt.Unix())
 
 		// マスタ確認
-		query := "SELECT * FROM version_masters WHERE status=1"
-		masterVersion := new(VersionMaster)
-		if err := h.DB.Get(masterVersion, query); err != nil {
-			if err == sql.ErrNoRows {
-				return errorResponse(c, http.StatusNotFound, fmt.Errorf("active master version is not found"))
-			}
+		masterVersion, err := h.MD.getVersionMaster()
+		if err != nil {
 			return errorResponse(c, http.StatusInternalServerError, err)
 		}
 
@@ -391,9 +393,8 @@ func isCompleteTodayLogin(lastActivatedAt, requestAt time.Time) bool {
 // obtainLoginBonus
 func (h *Handler) obtainLoginBonus(tx *sqlx.Tx, userID int64, requestAt int64) ([]*UserLoginBonus, error) {
 	// login bonus masterから有効なログインボーナスを取得
-	loginBonuses := make([]*LoginBonusMaster, 0)
-	query := "SELECT * FROM login_bonus_masters WHERE start_at <= ? AND end_at >= ?"
-	if err := tx.Select(&loginBonuses, query, requestAt, requestAt); err != nil {
+	loginBonuses, err := h.MD.getLoginBonusMasters(requestAt)
+	if err != nil {
 		return nil, err
 	}
 
@@ -403,7 +404,7 @@ func (h *Handler) obtainLoginBonus(tx *sqlx.Tx, userID int64, requestAt int64) (
 		initBonus := false
 		// ボーナスの進捗取得
 		userBonus := new(UserLoginBonus)
-		query = "SELECT * FROM user_login_bonuses WHERE user_id=? AND login_bonus_id=?"
+		query := "SELECT * FROM user_login_bonuses WHERE user_id=? AND login_bonus_id=?"
 		if err := tx.Get(userBonus, query, userID, bonus.ID); err != nil {
 			if err != sql.ErrNoRows {
 				return nil, err
@@ -440,28 +441,24 @@ func (h *Handler) obtainLoginBonus(tx *sqlx.Tx, userID int64, requestAt int64) (
 		userBonus.UpdatedAt = requestAt
 
 		// 今回付与するリソース取得
-		rewardItem := new(LoginBonusRewardMaster)
-		query = "SELECT * FROM login_bonus_reward_masters WHERE login_bonus_id=? AND reward_sequence=?"
-		if err := tx.Get(rewardItem, query, bonus.ID, userBonus.LastRewardSequence); err != nil {
-			if err == sql.ErrNoRows {
-				return nil, ErrLoginBonusRewardNotFound
-			}
+		rewardItem, err := h.MD.getLoginBonusRewardMasterByIdAndSeq(bonus.ID, userBonus.LastRewardSequence)
+		if err != nil {
 			return nil, err
 		}
 
-		_, _, _, err := h.obtainItem(tx, userID, rewardItem.ItemID, rewardItem.ItemType, rewardItem.Amount, requestAt)
+		_, _, _, err = h.obtainItem(tx, userID, rewardItem.ItemID, rewardItem.ItemType, rewardItem.Amount, requestAt)
 		if err != nil {
 			return nil, err
 		}
 
 		// 進捗の保存
 		if initBonus {
-			query = "INSERT INTO user_login_bonuses(id, user_id, login_bonus_id, last_reward_sequence, loop_count, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
+			query := "INSERT INTO user_login_bonuses(id, user_id, login_bonus_id, last_reward_sequence, loop_count, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
 			if _, err = tx.Exec(query, userBonus.ID, userBonus.UserID, userBonus.LoginBonusID, userBonus.LastRewardSequence, userBonus.LoopCount, userBonus.CreatedAt, userBonus.UpdatedAt); err != nil {
 				return nil, err
 			}
 		} else {
-			query = "UPDATE user_login_bonuses SET last_reward_sequence=?, loop_count=?, updated_at=? WHERE id=?"
+			query := "UPDATE user_login_bonuses SET last_reward_sequence=?, loop_count=?, updated_at=? WHERE id=?"
 			if _, err = tx.Exec(query, userBonus.LastRewardSequence, userBonus.LoopCount, userBonus.UpdatedAt, userBonus.ID); err != nil {
 				return nil, err
 			}
@@ -475,9 +472,8 @@ func (h *Handler) obtainLoginBonus(tx *sqlx.Tx, userID int64, requestAt int64) (
 
 // obtainPresent プレゼント付与処理
 func (h *Handler) obtainPresent(tx *sqlx.Tx, userID int64, requestAt int64) ([]*UserPresent, error) {
-	normalPresents := make([]*PresentAllMaster, 0)
-	query := "SELECT * FROM present_all_masters WHERE registered_start_at <= ? AND registered_end_at >= ?"
-	if err := tx.Select(&normalPresents, query, requestAt, requestAt); err != nil {
+	normalPresents, err := h.MD.getPresentAllMasters(requestAt)
+	if err != nil {
 		return nil, err
 	}
 
@@ -485,7 +481,7 @@ func (h *Handler) obtainPresent(tx *sqlx.Tx, userID int64, requestAt int64) ([]*
 	obtainPresents := make([]*UserPresent, 0)
 
 	received_histories := []*UserPresentAllReceivedHistory{}
-	query = "SELECT * FROM user_present_all_received_history WHERE user_id = ?"
+	query := "SELECT * FROM user_present_all_received_history WHERE user_id = ?"
 	if err := tx.Select(&received_histories, query, userID); err != nil {
 		return nil, err
 	}
@@ -586,13 +582,9 @@ func (h *Handler) obtainItem(tx *sqlx.Tx, userID, itemID int64, itemType int, ob
 		obtainCoins = append(obtainCoins, obtainAmount)
 
 	case 2: // card(ハンマー)
-		query := "SELECT * FROM item_masters WHERE id=? AND item_type=?"
-		item := new(ItemMaster)
-		if err := tx.Get(item, query, itemID, itemType); err != nil {
-			if err == sql.ErrNoRows {
-				return nil, nil, nil, ErrItemNotFound
-			}
-			return nil, nil, nil, err
+		item, err := h.MD.getItemMasterByIdAndItemType(itemID, int64(itemType))
+		if err != nil {
+			return nil, nil, nil, ErrItemNotFound
 		}
 
 		cID, err := h.generateID()
@@ -609,23 +601,20 @@ func (h *Handler) obtainItem(tx *sqlx.Tx, userID, itemID int64, itemType int, ob
 			CreatedAt:    requestAt,
 			UpdatedAt:    requestAt,
 		}
-		query = "INSERT INTO user_cards(id, user_id, card_id, amount_per_sec, level, total_exp, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+		query := "INSERT INTO user_cards(id, user_id, card_id, amount_per_sec, level, total_exp, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
 		if _, err := tx.Exec(query, card.ID, card.UserID, card.CardID, card.AmountPerSec, card.Level, card.TotalExp, card.CreatedAt, card.UpdatedAt); err != nil {
 			return nil, nil, nil, err
 		}
 		obtainCards = append(obtainCards, card)
 
 	case 3, 4: // 強化素材
-		query := "SELECT * FROM item_masters WHERE id=? AND item_type=?"
-		item := new(ItemMaster)
-		if err := tx.Get(item, query, itemID, itemType); err != nil {
-			if err == sql.ErrNoRows {
-				return nil, nil, nil, ErrItemNotFound
-			}
-			return nil, nil, nil, err
+		item, err := h.MD.getItemMasterByIdAndItemType(itemID, int64(itemType))
+		if err != nil {
+			return nil, nil, nil, ErrItemNotFound
 		}
+
 		// 所持数取得
-		query = "SELECT * FROM user_items WHERE user_id=? AND item_id=?"
+		query := "SELECT * FROM user_items WHERE user_id=? AND item_id=?"
 		uitem := new(UserItem)
 		if err := tx.Get(uitem, query, userID, item.ID); err != nil {
 			if err != sql.ErrNoRows {
@@ -673,7 +662,7 @@ func (h *Handler) obtainItem(tx *sqlx.Tx, userID, itemID int64, itemType int, ob
 
 // initialize 初期化処理
 // POST /initialize
-func initialize(c echo.Context) error {
+func (h *Handler) initialize(c echo.Context) error {
 	dbx, err := connectDB(true)
 	if err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
@@ -684,6 +673,10 @@ func initialize(c echo.Context) error {
 	if err != nil {
 		c.Logger().Errorf("Failed to initialize %s: %v", string(out), err)
 		return errorResponse(c, http.StatusInternalServerError, err)
+	}
+
+	if err := h.MD.Load(h); err != nil {
+		return err
 	}
 
 	return successResponse(c, &InitializeResponse{
@@ -758,13 +751,9 @@ func (h *Handler) createUser(c echo.Context) error {
 	}
 
 	// 初期デッキ付与
-	initCard := new(ItemMaster)
-	query = "SELECT * FROM item_masters WHERE id=?"
-	if err = tx.Get(initCard, query, 2); err != nil {
-		if err == sql.ErrNoRows {
-			return errorResponse(c, http.StatusNotFound, ErrItemNotFound)
-		}
-		return errorResponse(c, http.StatusInternalServerError, err)
+	initCard, err := h.MD.getItemMasterById(2)
+	if err != nil {
+		return errorResponse(c, http.StatusNotFound, ErrItemNotFound)
 	}
 
 	initCards := make([]*UserCard, 0, 3)
@@ -994,9 +983,7 @@ func (h *Handler) listGacha(c echo.Context) error {
 		return errorResponse(c, http.StatusInternalServerError, ErrGetRequestTime)
 	}
 
-	gachaMasterList := []*GachaMaster{}
-	query := "SELECT * FROM gacha_masters WHERE start_at <= ? AND end_at >= ? ORDER BY display_order ASC"
-	err = h.DB.Select(&gachaMasterList, query, requestAt, requestAt)
+	gachaMasterList, err := h.MD.getGachaMasters(requestAt)
 	if err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
@@ -1009,10 +996,8 @@ func (h *Handler) listGacha(c echo.Context) error {
 
 	// ガチャ排出アイテム取得
 	gachaDataList := make([]*GachaData, 0)
-	query = "SELECT * FROM gacha_item_masters WHERE gacha_id=? ORDER BY id ASC"
 	for _, v := range gachaMasterList {
-		var gachaItem []*GachaItemMaster
-		err = h.DB.Select(&gachaItem, query, v.ID)
+		gachaItem, err := h.MD.getGachaItemMastersById(v.ID)
 		if err != nil {
 			return errorResponse(c, http.StatusInternalServerError, err)
 		}
@@ -1111,32 +1096,21 @@ func (h *Handler) drawGacha(c echo.Context) error {
 	}
 
 	// gachaIDからガチャマスタの取得
-	query = "SELECT * FROM gacha_masters WHERE id=? AND start_at <= ?"
-	gachaInfo := new(GachaMaster)
-	if err = h.DB.Get(gachaInfo, query, gachaID, requestAt); err != nil {
-		if sql.ErrNoRows == err {
-			return errorResponse(c, http.StatusNotFound, fmt.Errorf("not found gacha"))
-		}
-		return errorResponse(c, http.StatusInternalServerError, err)
-	}
-
-	// gachaItemMasterからアイテムリスト取得
-	gachaItemList := make([]*GachaItemMaster, 0)
-	err = h.DB.Select(&gachaItemList, "SELECT * FROM gacha_item_masters WHERE gacha_id=? ORDER BY id ASC", gachaID)
+	gachaIDint, err := strconv.Atoi(gachaID)
 	if err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
+	gachaInfo, err := h.MD.getGachaMasterById(requestAt, int64(gachaIDint))
+
+	// gachaItemMasterからアイテムリスト取得
+	gachaItemList, err := h.MD.getGachaItemMastersById(int64(gachaIDint))
 	if len(gachaItemList) == 0 {
 		return errorResponse(c, http.StatusNotFound, fmt.Errorf("not found gacha item"))
 	}
 
 	// weightの合計値を算出
-	var sum int64
-	err = h.DB.Get(&sum, "SELECT SUM(weight) FROM gacha_item_masters WHERE gacha_id=?", gachaID)
+	sum, err := h.MD.getGachaItemMastersWeightById(int64(gachaIDint))
 	if err != nil {
-		if err == sql.ErrNoRows {
-			return errorResponse(c, http.StatusNotFound, err)
-		}
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
 
@@ -1345,8 +1319,8 @@ func (h *Handler) receivePresent(c echo.Context) error {
 
 	obtainCoins := 0
 
-	itemMasters := []*ItemMaster{}
-	if err := tx.Select(&itemMasters, "SELECT * FROM item_masters"); err != nil {
+	itemMasters, err := h.MD.getItemMasters()
+	if err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
 	obtainCards := []*UserCard{}
@@ -1588,8 +1562,8 @@ func (h *Handler) addExpToCard(c echo.Context) error {
 	}
 
 	// get target card
-	itemMasters := []*ItemMaster{}
-	if err = h.DB.Select(&itemMasters, "SELECT * FROM item_masters"); err != nil {
+	itemMasters, err := h.MD.getItemMasters()
+	if err != nil {
 		return err
 	}
 

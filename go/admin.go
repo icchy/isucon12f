@@ -487,6 +487,10 @@ func (h *Handler) adminUpdateMaster(c echo.Context) error {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
 
+	if err := h.MD.Load(h); err != nil {
+		return errorResponse(c, http.StatusInternalServerError, err)
+	}
+
 	return successResponse(c, &AdminUpdateMasterResponse{
 		VersionMaster: activeMaster,
 	})
