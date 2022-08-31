@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/bwmarrin/snowflake"
@@ -47,9 +48,44 @@ const (
 	SQLDirectory string = "../sql/"
 )
 
+type TokenStore struct {
+	mtx sync.RWMutex
+	m   map[string]int64
+}
+
+func NewTokenStore() *TokenStore {
+	return &TokenStore{
+		m: make(map[string]int64),
+	}
+}
+
+func (t *TokenStore) Get(token string, tokenType int) (int64, bool) {
+	t.mtx.RLock()
+	v, ok := t.m[fmt.Sprintf("%s_%d", token, tokenType)]
+	t.mtx.RUnlock()
+	if !ok {
+		return 0, false
+	}
+
+	return v, true
+}
+
+func (t *TokenStore) Set(token string, tokenType int, value int64) {
+	t.mtx.Lock()
+	t.m[fmt.Sprintf("%s_%d", token, tokenType)] = value
+	t.mtx.Unlock()
+}
+
+func (t *TokenStore) Del(token string, tokenType int) {
+	t.mtx.Lock()
+	delete(t.m, fmt.Sprintf("%s_%d", token, tokenType))
+	t.mtx.Unlock()
+}
+
 type Handler struct {
 	DB     *sqlx.DB
 	SFNode *snowflake.Node
+	TS     *TokenStore
 }
 
 func main() {
@@ -83,6 +119,7 @@ func main() {
 	h := &Handler{
 		DB:     dbx,
 		SFNode: node,
+		TS:     NewTokenStore(),
 	}
 
 	// e.Use(middleware.CORS())
@@ -242,30 +279,29 @@ func (h *Handler) checkSessionMiddleware(next echo.HandlerFunc) echo.HandlerFunc
 
 // checkOneTimeToken
 func (h *Handler) checkOneTimeToken(token string, tokenType int, requestAt int64) error {
-	tk := new(UserOneTimeToken)
-	query := "SELECT * FROM user_one_time_tokens WHERE token=? AND token_type=?"
-	if err := h.DB.Get(tk, query, token, tokenType); err != nil {
-		if err == sql.ErrNoRows {
-			return ErrInvalidToken
-		}
-		return err
+	expiresAt, ok := h.TS.Get(token, tokenType)
+	if !ok {
+		return ErrInvalidToken
 	}
 
-	if tk.ExpiredAt < requestAt {
-		query = "DELETE FROM user_one_time_tokens WHERE token=?"
-		if _, err := h.DB.Exec(query, token); err != nil {
-			return err
-		}
+	if expiresAt < requestAt {
 		return ErrInvalidToken
 	}
 
 	// 使ったトークンを失効する
-	query = "DELETE FROM user_one_time_tokens WHERE token=?"
-	if _, err := h.DB.Exec(query, token); err != nil {
-		return err
-	}
+	h.TS.Del(token, tokenType)
 
 	return nil
+}
+
+func (h *Handler) newOneTimeToken(tokenType int, requestAt int64) (string, error) {
+	token, err := generateUUID()
+	if err != nil {
+		return "", err
+	}
+	h.TS.Set(token, tokenType, requestAt+600)
+
+	return token, nil
 }
 
 // checkViewerID
@@ -948,7 +984,7 @@ type LoginResponse struct {
 // listGacha ガチャ一覧
 // GET /user/{userID}/gacha/index
 func (h *Handler) listGacha(c echo.Context) error {
-	userID, err := getUserID(c)
+	_, err := getUserID(c)
 	if err != nil {
 		return errorResponse(c, http.StatusBadRequest, err)
 	}
@@ -992,34 +1028,13 @@ func (h *Handler) listGacha(c echo.Context) error {
 	}
 
 	// genearte one time token
-	query = "DELETE FROM user_one_time_tokens WHERE user_id=?"
-	if _, err = h.DB.Exec(query, userID); err != nil {
-		return errorResponse(c, http.StatusInternalServerError, err)
-	}
-	tID, err := h.generateID()
+	tk, err := h.newOneTimeToken(1, requestAt)
 	if err != nil {
-		return errorResponse(c, http.StatusInternalServerError, err)
-	}
-	tk, err := generateUUID()
-	if err != nil {
-		return errorResponse(c, http.StatusInternalServerError, err)
-	}
-	token := &UserOneTimeToken{
-		ID:        tID,
-		UserID:    userID,
-		Token:     tk,
-		TokenType: 1,
-		CreatedAt: requestAt,
-		UpdatedAt: requestAt,
-		ExpiredAt: requestAt + 600,
-	}
-	query = "INSERT INTO user_one_time_tokens(id, user_id, token, token_type, created_at, updated_at, expired_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
-	if _, err = h.DB.Exec(query, token.ID, token.UserID, token.Token, token.TokenType, token.CreatedAt, token.UpdatedAt, token.ExpiredAt); err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
 
 	return successResponse(c, &ListGachaResponse{
-		OneTimeToken: token.Token,
+		OneTimeToken: tk,
 		Gachas:       gachaDataList,
 	})
 }
@@ -1513,34 +1528,13 @@ func (h *Handler) listItem(c echo.Context) error {
 	}
 
 	// genearte one time token
-	query = "DELETE FROM user_one_time_tokens WHERE user_id=?"
-	if _, err = h.DB.Exec(query, userID); err != nil {
-		return errorResponse(c, http.StatusInternalServerError, err)
-	}
-	tID, err := h.generateID()
+	tk, err := h.newOneTimeToken(2, requestAt)
 	if err != nil {
-		return errorResponse(c, http.StatusInternalServerError, err)
-	}
-	tk, err := generateUUID()
-	if err != nil {
-		return errorResponse(c, http.StatusInternalServerError, err)
-	}
-	token := &UserOneTimeToken{
-		ID:        tID,
-		UserID:    userID,
-		Token:     tk,
-		TokenType: 2,
-		CreatedAt: requestAt,
-		UpdatedAt: requestAt,
-		ExpiredAt: requestAt + 600,
-	}
-	query = "INSERT INTO user_one_time_tokens(id, user_id, token, token_type, created_at, updated_at, expired_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
-	if _, err = h.DB.Exec(query, token.ID, token.UserID, token.Token, token.TokenType, token.CreatedAt, token.UpdatedAt, token.ExpiredAt); err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
 
 	return successResponse(c, &ListItemResponse{
-		OneTimeToken: token.Token,
+		OneTimeToken: tk,
 		Items:        itemList,
 		User:         user,
 		Cards:        cardList,
