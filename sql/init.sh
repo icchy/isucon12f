@@ -8,6 +8,12 @@ ISUCON_DB_USER=${ISUCON_DB_USER:-isucon}
 ISUCON_DB_PASSWORD=${ISUCON_DB_PASSWORD:-isucon}
 ISUCON_DB_NAME=${ISUCON_DB_NAME:-isucon}
 
+echo "set global slow_query_log = OFF;" | mysql -u"$ISUCON_DB_USER" \
+		-p"$ISUCON_DB_PASSWORD" \
+		--host "$ISUCON_DB_HOST" \
+		--port "$ISUCON_DB_PORT" \
+		"$ISUCON_DB_NAME"
+
 mysql -u"$ISUCON_DB_USER" \
 		-p"$ISUCON_DB_PASSWORD" \
 		--host "$ISUCON_DB_HOST" \
@@ -36,3 +42,9 @@ echo "LOAD DATA INFILE '${SECURE_DIR}5_user_presents_not_receive_data.tsv' REPLA
         --host "$ISUCON_DB_HOST" \
         --port "$ISUCON_DB_PORT" \
         "$ISUCON_DB_NAME" 
+
+echo "set global slow_query_log_file = '/var/log/mysql/mysql-slow.log'; set global long_query_time = 0; set global slow_query_log = ON;" | mysql -u"$ISUCON_DB_USER" \
+		-p"$ISUCON_DB_PASSWORD" \
+		--host "$ISUCON_DB_HOST" \
+		--port "$ISUCON_DB_PORT" \
+		"$ISUCON_DB_NAME"
