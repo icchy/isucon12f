@@ -30,7 +30,7 @@ func NewMasterData() *MasterData {
 }
 
 func (m *MasterData) Load(h *Handler) error {
-	db := h.DB
+	db := h.getAdminDB()
 
 	m.mtx.Lock()
 	defer m.mtx.Unlock()
