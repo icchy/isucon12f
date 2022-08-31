@@ -1348,10 +1348,46 @@ func (h *Handler) receivePresent(c echo.Context) error {
 
 	obtainCoins := 0
 
+	itemMasters := []*ItemMaster{}
+	if err := tx.Select(&itemMasters, "SELECT * FROM item_masters"); err != nil {
+		return errorResponse(c, http.StatusInternalServerError, err)
+	}
+	obtainCards := []*UserCard{}
+
 	for _, v := range obtainPresent {
 		switch v.ItemType {
 		case 1: // coin
 			obtainCoins += v.Amount
+		case 2: // card
+			var item *ItemMaster
+			item = nil
+			for _, im := range itemMasters {
+				if im.ID == v.ItemID && im.ItemType == v.ItemType {
+					item = im
+				}
+			}
+
+			if item == nil {
+				return errorResponse(c, http.StatusNotFound, err)
+			}
+
+			cID, err := h.generateID()
+			if err != nil {
+				return errorResponse(c, http.StatusInternalServerError, err)
+			}
+
+			card := &UserCard{
+				ID:           cID,
+				UserID:       userID,
+				CardID:       item.ID,
+				AmountPerSec: *item.AmountPerSec,
+				Level:        1,
+				TotalExp:     0,
+				CreatedAt:    requestAt,
+				UpdatedAt:    requestAt,
+			}
+
+			obtainCards = append(obtainCards, card)
 		}
 	}
 
@@ -1362,8 +1398,15 @@ func (h *Handler) receivePresent(c echo.Context) error {
 		}
 	}
 
+	if len(obtainCards) > 0 {
+		if _, err := tx.NamedExec("INSERT INTO user_cards(id, user_id, card_id, amount_per_sec, level, total_exp, created_at, updated_at) "+
+			"VALUES (:id, :user_id, :card_id, :amount_per_sec, :level, :total_exp, :created_at, :updated_at)", obtainCards); err != nil {
+			return errorResponse(c, http.StatusInternalServerError, err)
+		}
+	}
+
 	for _, v := range obtainPresent {
-		if v.ItemType == 1 {
+		if v.ItemType == 1 || v.ItemType == 2 {
 			continue
 		}
 
