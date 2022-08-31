@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 set -ex
 cd `dirname $0`
 
@@ -8,6 +8,13 @@ ISUCON_DB_USER=${ISUCON_DB_USER:-isucon}
 ISUCON_DB_PASSWORD=${ISUCON_DB_PASSWORD:-isucon}
 ISUCON_DB_NAME=${ISUCON_DB_NAME:-isucon}
 
+if [ `hostname` == "a01-28" ]; then
+  ssh i2 "bash -c '~/webapp/sql/init.sh'" &
+  ssh i3 "bash -c '~/webapp/sql/init.sh'" &
+  ssh i4 "bash -c '~/webapp/sql/init.sh'" &
+  ssh i5 "bash -c '~/webapp/sql/init.sh'" &
+  wait
+else
 echo "set global slow_query_log = OFF;" | mysql -u"$ISUCON_DB_USER" \
 		-p"$ISUCON_DB_PASSWORD" \
 		--host "$ISUCON_DB_HOST" \
@@ -54,3 +61,4 @@ echo "set global slow_query_log_file = '/var/log/mysql/mysql-slow.log'; set glob
 		--host "$ISUCON_DB_HOST" \
 		--port "$ISUCON_DB_PORT" \
 		"$ISUCON_DB_NAME"
+fi
