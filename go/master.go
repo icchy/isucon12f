@@ -7,7 +7,14 @@ import (
 )
 
 type MasterData struct {
-	mtx                     sync.RWMutex
+	mtxVersionMasters          sync.RWMutex
+	mtxItemMasters             sync.RWMutex
+	mtxGachaMasters            sync.RWMutex
+	mtxGachaItemMasters        sync.RWMutex
+	mtxPresentAllMasters       sync.RWMutex
+	mtxLoginBonusMasters       sync.RWMutex
+	mtxLoginBonusRewardMasters sync.RWMutex
+
 	VersionMasters          []*VersionMaster
 	ItemMasters             []*ItemMaster
 	GachaMasters            []*GachaMaster
@@ -32,33 +39,44 @@ func NewMasterData() *MasterData {
 func (m *MasterData) Load(h *Handler) error {
 	db := h.getAdminDB()
 
-	m.mtx.Lock()
-	defer m.mtx.Unlock()
-
+	m.mtxVersionMasters.Lock()
+	defer m.mtxVersionMasters.Unlock()
 	if err := db.Select(&m.VersionMasters, "SELECT * FROM version_masters"); err != nil {
 		return err
 	}
 
+	m.mtxItemMasters.Lock()
+	defer m.mtxItemMasters.Unlock()
 	if err := db.Select(&m.ItemMasters, "SELECT * FROM item_masters"); err != nil {
 		return err
 	}
 
+	m.mtxGachaMasters.Lock()
+	defer m.mtxGachaMasters.Unlock()
 	if err := db.Select(&m.GachaMasters, "SELECT * FROM gacha_masters"); err != nil {
 		return err
 	}
 
+	m.mtxGachaItemMasters.Lock()
+	defer m.mtxGachaItemMasters.Unlock()
 	if err := db.Select(&m.GachaItemMasters, "SELECT * FROM gacha_item_masters"); err != nil {
 		return err
 	}
 
+	m.mtxPresentAllMasters.Lock()
+	defer m.mtxPresentAllMasters.Unlock()
 	if err := db.Select(&m.PresentAllMasters, "SELECT * FROM present_all_masters"); err != nil {
 		return err
 	}
 
+	m.mtxLoginBonusMasters.Lock()
+	defer m.mtxLoginBonusMasters.Unlock()
 	if err := db.Select(&m.LoginBonusMasters, "SELECT * FROM login_bonus_masters"); err != nil {
 		return err
 	}
 
+	m.mtxLoginBonusRewardMasters.Lock()
+	defer m.mtxLoginBonusRewardMasters.Unlock()
 	if err := db.Select(&m.LoginBonusRewardMasters, "SELECT * FROM login_bonus_reward_masters"); err != nil {
 		return err
 	}
@@ -67,8 +85,8 @@ func (m *MasterData) Load(h *Handler) error {
 }
 
 func (m *MasterData) getVersionMaster() (*VersionMaster, error) {
-	m.mtx.RLock()
-	defer m.mtx.RUnlock()
+	m.mtxVersionMasters.RLock()
+	defer m.mtxVersionMasters.RUnlock()
 
 	for _, v := range m.VersionMasters {
 		if v.Status == 1 {
@@ -80,15 +98,15 @@ func (m *MasterData) getVersionMaster() (*VersionMaster, error) {
 }
 
 func (m *MasterData) getItemMasters() ([]*ItemMaster, error) {
-	m.mtx.RLock()
-	defer m.mtx.RUnlock()
+	m.mtxItemMasters.RLock()
+	defer m.mtxItemMasters.RUnlock()
 
 	return m.ItemMasters, nil
 }
 
 func (m *MasterData) getItemMasterById(id int64) (*ItemMaster, error) {
-	m.mtx.RLock()
-	defer m.mtx.RUnlock()
+	m.mtxItemMasters.RLock()
+	defer m.mtxItemMasters.RUnlock()
 
 	for _, v := range m.ItemMasters {
 		if v.ID == id {
@@ -100,8 +118,8 @@ func (m *MasterData) getItemMasterById(id int64) (*ItemMaster, error) {
 }
 
 func (m *MasterData) getItemMasterByIdAndItemType(id, itemType int64) (*ItemMaster, error) {
-	m.mtx.RLock()
-	defer m.mtx.RUnlock()
+	m.mtxItemMasters.RLock()
+	defer m.mtxItemMasters.RUnlock()
 
 	for _, v := range m.ItemMasters {
 		if v.ID == id && v.ItemType == v.ItemType {
@@ -113,8 +131,8 @@ func (m *MasterData) getItemMasterByIdAndItemType(id, itemType int64) (*ItemMast
 }
 
 func (m *MasterData) getGachaMasters(requestAt int64) ([]*GachaMaster, error) {
-	m.mtx.RLock()
-	defer m.mtx.RUnlock()
+	m.mtxGachaMasters.RLock()
+	defer m.mtxGachaMasters.RUnlock()
 
 	gachaMasters := []*GachaMaster{}
 
@@ -132,8 +150,8 @@ func (m *MasterData) getGachaMasters(requestAt int64) ([]*GachaMaster, error) {
 }
 
 func (m *MasterData) getGachaMasterById(requestAt, id int64) (*GachaMaster, error) {
-	m.mtx.RLock()
-	defer m.mtx.RUnlock()
+	m.mtxGachaMasters.RLock()
+	defer m.mtxGachaMasters.RUnlock()
 
 	for _, v := range m.GachaMasters {
 		if v.StartAt <= requestAt && v.ID == id { // && v.EndAt >= requestAt // to avoid benchmark bug
@@ -145,8 +163,8 @@ func (m *MasterData) getGachaMasterById(requestAt, id int64) (*GachaMaster, erro
 }
 
 func (m *MasterData) getGachaItemMastersById(id int64) ([]*GachaItemMaster, error) {
-	m.mtx.RLock()
-	defer m.mtx.RUnlock()
+	m.mtxGachaItemMasters.RLock()
+	defer m.mtxGachaItemMasters.RUnlock()
 
 	gachaItemMasters := []*GachaItemMaster{}
 
@@ -164,8 +182,8 @@ func (m *MasterData) getGachaItemMastersById(id int64) ([]*GachaItemMaster, erro
 }
 
 func (m *MasterData) getGachaItemMastersWeightById(id int64) (int64, error) {
-	m.mtx.RLock()
-	defer m.mtx.RUnlock()
+	m.mtxGachaItemMasters.RLock()
+	defer m.mtxGachaItemMasters.RUnlock()
 
 	var sum int64
 	sum = 0
@@ -179,8 +197,8 @@ func (m *MasterData) getGachaItemMastersWeightById(id int64) (int64, error) {
 }
 
 func (m *MasterData) getPresentAllMasters(requestAt int64) ([]*PresentAllMaster, error) {
-	m.mtx.RLock()
-	defer m.mtx.RUnlock()
+	m.mtxPresentAllMasters.RLock()
+	defer m.mtxPresentAllMasters.RUnlock()
 
 	presentAllMasters := []*PresentAllMaster{}
 
@@ -194,8 +212,8 @@ func (m *MasterData) getPresentAllMasters(requestAt int64) ([]*PresentAllMaster,
 }
 
 func (m *MasterData) getLoginBonusMasters(requestAt int64) ([]*LoginBonusMaster, error) {
-	m.mtx.RLock()
-	defer m.mtx.RUnlock()
+	m.mtxLoginBonusMasters.RLock()
+	defer m.mtxLoginBonusMasters.RUnlock()
 
 	loginBonudMasters := []*LoginBonusMaster{}
 
@@ -209,8 +227,8 @@ func (m *MasterData) getLoginBonusMasters(requestAt int64) ([]*LoginBonusMaster,
 }
 
 func (m *MasterData) getLoginBonusRewardMasterByIdAndSeq(id int64, seq int) (*LoginBonusRewardMaster, error) {
-	m.mtx.RLock()
-	defer m.mtx.RUnlock()
+	m.mtxLoginBonusRewardMasters.RLock()
+	defer m.mtxLoginBonusRewardMasters.RUnlock()
 
 	for _, v := range m.LoginBonusRewardMasters {
 		if v.LoginBonusID == id && v.RewardSequence == seq {
