@@ -1346,7 +1346,27 @@ func (h *Handler) receivePresent(c echo.Context) error {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
 
+	obtainCoins := 0
+
 	for _, v := range obtainPresent {
+		switch v.ItemType {
+		case 1: // coin
+			obtainCoins += v.Amount
+		}
+	}
+
+	if obtainCoins > 0 {
+		// all userIDs included in a request should be the same
+		if _, err := tx.Exec("UPDATE users SET isu_coin = isu_coin + ? WHERE id = ?", obtainCoins, userID); err != nil {
+			return errorResponse(c, http.StatusInternalServerError, err)
+		}
+	}
+
+	for _, v := range obtainPresent {
+		if v.ItemType == 1 {
+			continue
+		}
+
 		_, _, _, err = h.obtainItem(tx, v.UserID, v.ItemID, v.ItemType, int64(v.Amount), requestAt)
 		if err != nil {
 			if err == ErrUserNotFound || err == ErrItemNotFound {
