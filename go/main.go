@@ -111,6 +111,7 @@ func main() {
 		e.Logger.Fatalf("failed to generate snowflake node: %v", err)
 	}
 	h := &Handler{
+		DB:     make([]*sqlx.DB, 0),
 		SFNode: node,
 		TS:     NewTokenStore(),
 		MD:     NewMasterData(),
