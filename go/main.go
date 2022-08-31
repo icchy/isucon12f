@@ -1354,6 +1354,12 @@ func (h *Handler) receivePresent(c echo.Context) error {
 	}
 	obtainCards := []*UserCard{}
 
+	userItems := []*UserItem{}
+	if err := tx.Select(&userItems, "SELECT * FROM user_items WHERE user_id = ?", userID); err != nil {
+		return errorResponse(c, http.StatusInternalServerError, err)
+	}
+	obtainMaterials := []*UserItem{}
+
 	for _, v := range obtainPresent {
 		switch v.ItemType {
 		case 1: // coin
@@ -1388,6 +1394,48 @@ func (h *Handler) receivePresent(c echo.Context) error {
 			}
 
 			obtainCards = append(obtainCards, card)
+		case 3, 4: // reinforcing materials
+			var item *ItemMaster
+			item = nil
+			for _, im := range itemMasters {
+				if im.ID == v.ItemID && im.ItemType == v.ItemType {
+					item = im
+				}
+			}
+
+			if item == nil {
+				return errorResponse(c, http.StatusNotFound, err)
+			}
+
+			var uitem *UserItem
+			uitem = nil
+			for _, ui := range userItems {
+				if ui.ItemID == item.ID {
+					uitem = ui
+				}
+			}
+
+			if uitem == nil { // new
+				uitemID, err := h.generateID()
+				if err != nil {
+					return errorResponse(c, http.StatusInternalServerError, err)
+				}
+				uitem = &UserItem{
+					ID:        uitemID,
+					UserID:    userID,
+					ItemType:  item.ItemType,
+					ItemID:    item.ID,
+					Amount:    int(v.Amount),
+					CreatedAt: requestAt,
+					UpdatedAt: requestAt,
+				}
+			} else {
+				uitem.Amount += v.Amount
+				uitem.UpdatedAt = requestAt
+			}
+			obtainMaterials = append(obtainMaterials, uitem)
+		default:
+			return errorResponse(c, http.StatusBadRequest, ErrInvalidItemType)
 		}
 	}
 
@@ -1405,19 +1453,26 @@ func (h *Handler) receivePresent(c echo.Context) error {
 		}
 	}
 
-	for _, v := range obtainPresent {
-		if v.ItemType == 1 || v.ItemType == 2 {
-			continue
+	if len(obtainMaterials) > 0 {
+		mergedMaterials := make(map[int64]*UserItem)
+
+		for _, om := range obtainMaterials {
+			if v, ok := mergedMaterials[om.ItemID]; !ok {
+				mergedMaterials[om.ItemID] = om
+			} else {
+				v.Amount += om.Amount
+				v.UpdatedAt = om.UpdatedAt
+			}
 		}
 
-		_, _, _, err = h.obtainItem(tx, v.UserID, v.ItemID, v.ItemType, int64(v.Amount), requestAt)
-		if err != nil {
-			if err == ErrUserNotFound || err == ErrItemNotFound {
-				return errorResponse(c, http.StatusNotFound, err)
-			}
-			if err == ErrInvalidItemType {
-				return errorResponse(c, http.StatusBadRequest, err)
-			}
+		updatedMaterials := []*UserItem{}
+		for _, mm := range mergedMaterials {
+			updatedMaterials = append(updatedMaterials, mm)
+		}
+
+		if _, err := tx.NamedExec("INSERT INTO user_items(id, user_id, item_id, item_type, amount, created_at, updated_at) "+
+			"VALUES (:id, :user_id, :item_id, :item_type, :amount, :created_at, :updated_at) "+
+			"ON DUPLICATE KEY UPDATE `amount` = VALUES(`amount`), `updated_at` = VALUES(`updated_at`)", updatedMaterials); err != nil {
 			return errorResponse(c, http.StatusInternalServerError, err)
 		}
 	}
