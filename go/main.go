@@ -1330,28 +1330,35 @@ func (h *Handler) receivePresent(c echo.Context) error {
 	defer tx.Rollback() //nolint:errcheck
 
 	// 配布処理
-	for i := range obtainPresent {
-		if obtainPresent[i].DeletedAt != nil {
+	ids := []int64{}
+	for _, v := range obtainPresent {
+		if v.DeletedAt != nil {
 			return errorResponse(c, http.StatusInternalServerError, fmt.Errorf("received present"))
 		}
 
-		obtainPresent[i].UpdatedAt = requestAt
-		obtainPresent[i].DeletedAt = &requestAt
-		v := obtainPresent[i]
-		query = "INSERT INTO user_presents_deleted (id, user_id, sent_at, item_type, item_id, amount, present_message, created_at, updated_at, deleted_at) " +
-			"SELECT (id, user_id, sent_at, item_type, item_id, amount, present_message, created_at, ?, ?) WHERE id = ?"
+		v.UpdatedAt = requestAt
+		v.DeletedAt = &requestAt
 
-		query = "UPDATE user_presents SET deleted_at=?, updated_at=? WHERE id=?"
-		_, err := tx.Exec(query, requestAt, requestAt, v.ID)
-		if err != nil {
-			return errorResponse(c, http.StatusInternalServerError, err)
-		}
+		ids = append(ids, v.ID)
+	}
 
-		query = "DELETE FROM user_presents WHERE id = ?"
-		if _, err := tx.Exec(query, v.ID); err != nil {
-			return errorResponse(c, http.StatusInternalServerError, err)
-		}
+	query, args, err := sqlx.In("UPDATE user_presents SET deleted_at = ?, updated_at = ? WHERE id IN (?)", requestAt, requestAt, ids)
+	if err != nil {
+		return errorResponse(c, http.StatusInternalServerError, err)
+	}
+	if _, err := tx.Exec(query, args...); err != nil {
+		return errorResponse(c, http.StatusInternalServerError, err)
+	}
 
+	query, args, err = sqlx.In("DELETE FROM user_presents WHERE id in (?)", ids)
+	if err != nil {
+		return errorResponse(c, http.StatusInternalServerError, err)
+	}
+	if _, err := tx.Exec(query, args...); err != nil {
+		return errorResponse(c, http.StatusInternalServerError, err)
+	}
+
+	for _, v := range obtainPresent {
 		_, _, _, err = h.obtainItem(tx, v.UserID, v.ItemID, v.ItemType, int64(v.Amount), requestAt)
 		if err != nil {
 			if err == ErrUserNotFound || err == ErrItemNotFound {
