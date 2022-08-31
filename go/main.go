@@ -398,17 +398,34 @@ func (h *Handler) obtainLoginBonus(tx *sqlx.Tx, userID int64, requestAt int64) (
 
 	sendLoginBonuses := make([]*UserLoginBonus, 0)
 
-	for _, bonus := range loginBonuses {
-		initBonus := false
-		// ボーナスの進捗取得
-		userBonus := new(UserLoginBonus)
-		query := "SELECT * FROM user_login_bonuses WHERE user_id=? AND login_bonus_id=?"
-		if err := tx.Get(userBonus, query, userID, bonus.ID); err != nil {
-			if err != sql.ErrNoRows {
-				return nil, err
-			}
-			initBonus = true
+	userBonuses := []*UserLoginBonus{}
+	if err := tx.Select(&userBonuses, "SELECT * FROM user_login_bonuses WHERE user_id = ?", userID); err != nil {
+		return nil, err
+	}
 
+	obtainCoins := 0
+	itemMasters, err := h.MD.getItemMasters()
+	if err != nil {
+		return nil, err
+	}
+	obtainCards := []*UserCard{}
+
+	userItems := []*UserItem{}
+	if err := tx.Select(&userItems, "SELECT * FROM user_items WHERE user_id = ?", userID); err != nil {
+		return nil, err
+	}
+	obtainMaterials := []*UserItem{}
+
+	for _, bonus := range loginBonuses {
+		// ボーナスの進捗取得
+		var userBonus *UserLoginBonus
+		userBonus = nil
+		for _, ub := range userBonuses {
+			if ub.LoginBonusID == bonus.ID {
+				userBonus = ub
+			}
+		}
+		if userBonus == nil {
 			ubID, err := h.generateID()
 			if err != nil {
 				return nil, err
@@ -443,26 +460,131 @@ func (h *Handler) obtainLoginBonus(tx *sqlx.Tx, userID int64, requestAt int64) (
 		if err != nil {
 			return nil, err
 		}
-
 		_, _, _, err = h.obtainItem(tx, userID, rewardItem.ItemID, rewardItem.ItemType, rewardItem.Amount, requestAt)
-		if err != nil {
-			return nil, err
-		}
 
-		// 進捗の保存
-		if initBonus {
-			query := "INSERT INTO user_login_bonuses(id, user_id, login_bonus_id, last_reward_sequence, loop_count, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
-			if _, err = tx.Exec(query, userBonus.ID, userBonus.UserID, userBonus.LoginBonusID, userBonus.LastRewardSequence, userBonus.LoopCount, userBonus.CreatedAt, userBonus.UpdatedAt); err != nil {
+		switch rewardItem.ItemType {
+		case 1: // coin
+			obtainCoins += int(rewardItem.Amount)
+		case 2: // card
+			var item *ItemMaster
+			item = nil
+			for _, im := range itemMasters {
+				if im.ID == rewardItem.ItemID && im.ItemType == rewardItem.ItemType {
+					item = im
+				}
+			}
+
+			if item == nil {
+				return nil, ErrItemNotFound
+			}
+
+			cID, err := h.generateID()
+			if err != nil {
 				return nil, err
 			}
-		} else {
-			query := "UPDATE user_login_bonuses SET last_reward_sequence=?, loop_count=?, updated_at=? WHERE id=?"
-			if _, err = tx.Exec(query, userBonus.LastRewardSequence, userBonus.LoopCount, userBonus.UpdatedAt, userBonus.ID); err != nil {
-				return nil, err
+
+			card := &UserCard{
+				ID:           cID,
+				UserID:       userID,
+				CardID:       item.ID,
+				AmountPerSec: *item.AmountPerSec,
+				Level:        1,
+				TotalExp:     0,
+				CreatedAt:    requestAt,
+				UpdatedAt:    requestAt,
 			}
+
+			obtainCards = append(obtainCards, card)
+		case 3, 4: // reinforcing materials
+			var item *ItemMaster
+			item = nil
+			for _, im := range itemMasters {
+				if im.ID == rewardItem.ItemID && im.ItemType == rewardItem.ItemType {
+					item = im
+				}
+			}
+
+			if item == nil {
+				return nil, ErrItemNotFound
+			}
+
+			var uitem *UserItem
+			uitem = nil
+			for _, ui := range userItems {
+				if ui.ItemID == item.ID {
+					uitem = ui
+				}
+			}
+
+			if uitem == nil { // new
+				uitemID, err := h.generateID()
+				if err != nil {
+					return nil, err
+				}
+				uitem = &UserItem{
+					ID:        uitemID,
+					UserID:    userID,
+					ItemType:  item.ItemType,
+					ItemID:    item.ID,
+					Amount:    int(rewardItem.Amount),
+					CreatedAt: requestAt,
+					UpdatedAt: requestAt,
+				}
+			} else {
+				uitem.Amount += int(rewardItem.Amount)
+				uitem.UpdatedAt = requestAt
+			}
+			obtainMaterials = append(obtainMaterials, uitem)
+		default:
+			return nil, ErrInvalidItemType
 		}
 
 		sendLoginBonuses = append(sendLoginBonuses, userBonus)
+	}
+
+	if obtainCoins > 0 {
+		// all userIDs included in a request should be the same
+		if _, err := tx.Exec("UPDATE users SET isu_coin = isu_coin + ? WHERE id = ?", obtainCoins, userID); err != nil {
+			return nil, err
+		}
+	}
+
+	if len(obtainCards) > 0 {
+		if _, err := tx.NamedExec("INSERT INTO user_cards(id, user_id, card_id, amount_per_sec, level, total_exp, created_at, updated_at) "+
+			"VALUES (:id, :user_id, :card_id, :amount_per_sec, :level, :total_exp, :created_at, :updated_at)", obtainCards); err != nil {
+			return nil, err
+		}
+	}
+
+	if len(obtainMaterials) > 0 {
+		mergedMaterials := make(map[int64]*UserItem)
+
+		for _, om := range obtainMaterials {
+			if v, ok := mergedMaterials[om.ItemID]; !ok {
+				mergedMaterials[om.ItemID] = om
+			} else {
+				v.Amount += om.Amount
+				v.UpdatedAt = om.UpdatedAt
+			}
+		}
+
+		updatedMaterials := []*UserItem{}
+		for _, mm := range mergedMaterials {
+			updatedMaterials = append(updatedMaterials, mm)
+		}
+
+		if _, err := tx.NamedExec("INSERT INTO user_items(id, user_id, item_id, item_type, amount, created_at, updated_at) "+
+			"VALUES (:id, :user_id, :item_id, :item_type, :amount, :created_at, :updated_at) "+
+			"ON DUPLICATE KEY UPDATE `amount` = VALUES(`amount`), `updated_at` = VALUES(`updated_at`)", updatedMaterials); err != nil {
+			return nil, err
+		}
+	}
+
+	// 進捗の保存
+	if _, err := tx.NamedExec("INSERT INTO user_login_bonuses(id, user_id, login_bonus_id, last_reward_sequence, loop_count, created_at, updated_at) "+
+		"VALUES (:id, :user_id, :login_bonus_id, :last_reward_sequence, :loop_count, :created_at, :updated_at) "+
+		"ON DUPLICATE KEY UPDATE `last_reward_sequence` = VALUES(`last_reward_sequence`), `loop_count` = VALUES(`loop_count`), `updated_at` = VALUES(`updated_at`)", sendLoginBonuses); err != nil {
+		return nil, err
 	}
 
 	return sendLoginBonuses, nil
@@ -1299,15 +1421,7 @@ func (h *Handler) receivePresent(c echo.Context) error {
 		ids = append(ids, v.ID)
 	}
 
-	query, args, err := sqlx.In("UPDATE user_presents SET deleted_at = ?, updated_at = ? WHERE id IN (?)", requestAt, requestAt, ids)
-	if err != nil {
-		return errorResponse(c, http.StatusInternalServerError, err)
-	}
-	if _, err := tx.Exec(query, args...); err != nil {
-		return errorResponse(c, http.StatusInternalServerError, err)
-	}
-
-	query, args, err = sqlx.In("DELETE FROM user_presents WHERE id in (?)", ids)
+	query, args, err := sqlx.In("DELETE FROM user_presents WHERE id in (?)", ids)
 	if err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
