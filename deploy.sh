@@ -6,7 +6,7 @@ APP_HOST=i1
 
 (cd go && GOOS=linux GOARCH=amd64 go build -o ../webapp)
 scp webapp ${APP_HOST}:/tmp/webapp
-rsync -v sql/* $APP_HOST:webapp/sql/
+rsync -vr sql/* $APP_HOST:webapp/sql/
 
 # DB_HOSTS="i2 i3 i4 i5"
 # for h in $DB_HOSTS

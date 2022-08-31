@@ -88,7 +88,6 @@ func main() {
 
 	// utility
 	e.POST("/initialize", initialize)
-	e.POST("/initializeDB", initializeDB)
 	e.GET("/health", h.health)
 
 	// feature
@@ -646,31 +645,7 @@ func initialize(c echo.Context) error {
 	}
 	defer dbx.Close()
 
-	out, err := exec.Command("/bin/sh", "-c", SQLDirectory+"mysql_restore.sh").CombinedOutput()
-	if err != nil {
-		c.Logger().Errorf("Failed to initialize %s: %v", string(out), err)
-		return errorResponse(c, http.StatusInternalServerError, err)
-	}
-
-	return successResponse(c, &InitializeResponse{
-		Language: "go",
-	})
-}
-
-func initializeDB(c echo.Context) error {
-	dbx, err := connectDB(true)
-	if err != nil {
-		return errorResponse(c, http.StatusInternalServerError, err)
-	}
-	defer dbx.Close()
-
 	out, err := exec.Command("/bin/sh", "-c", SQLDirectory+"init.sh").CombinedOutput()
-	if err != nil {
-		c.Logger().Errorf("Failed to initialize %s: %v", string(out), err)
-		return errorResponse(c, http.StatusInternalServerError, err)
-	}
-
-	out, err = exec.Command("/bin/sh", "-c", SQLDirectory+"mysql_save.sh").CombinedOutput()
 	if err != nil {
 		c.Logger().Errorf("Failed to initialize %s: %v", string(out), err)
 		return errorResponse(c, http.StatusInternalServerError, err)

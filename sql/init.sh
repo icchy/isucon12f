@@ -32,6 +32,12 @@ echo "delete from user_presents where id > 100000000000" | mysql -u"$ISUCON_DB_U
 		--port "$ISUCON_DB_PORT" \
 		"$ISUCON_DB_NAME"
 
+echo "delete from user_presents_deleted where id > 100000000000" | mysql -u"$ISUCON_DB_USER" \
+		-p"$ISUCON_DB_PASSWORD" \
+		--host "$ISUCON_DB_HOST" \
+		--port "$ISUCON_DB_PORT" \
+		"$ISUCON_DB_NAME"
+
 DIR=`mysql -u"$ISUCON_DB_USER" -p"$ISUCON_DB_PASSWORD" -h "$ISUCON_DB_HOST" -Ns -e "show variables like 'secure_file_priv'" | cut -f2`
 SECURE_DIR=${DIR:-/var/lib/mysql-files/}
 
@@ -42,12 +48,6 @@ echo "LOAD DATA INFILE '${SECURE_DIR}5_user_presents_not_receive_data.tsv' REPLA
         --host "$ISUCON_DB_HOST" \
         --port "$ISUCON_DB_PORT" \
         "$ISUCON_DB_NAME" 
-
-mysql -u"$ISUCON_DB_USER" \
-		-p"$ISUCON_DB_PASSWORD" \
-		--host "$ISUCON_DB_HOST" \
-		--port "$ISUCON_DB_PORT" \
-		"$ISUCON_DB_NAME" < 7_split_user_presents.sql
 
 echo "set global slow_query_log_file = '/var/log/mysql/mysql-slow.log'; set global long_query_time = 0; set global slow_query_log = ON;" | mysql -u"$ISUCON_DB_USER" \
 		-p"$ISUCON_DB_PASSWORD" \
