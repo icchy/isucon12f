@@ -13,7 +13,8 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/go-sql-driver/mysql"
+	"github.com/bwmarrin/snowflake"
+	_ "github.com/go-sql-driver/mysql"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 	"github.com/labstack/echo/v4"
@@ -46,7 +47,8 @@ const (
 )
 
 type Handler struct {
-	DB *sqlx.DB
+	DB     *sqlx.DB
+	SFNode *snowflake.Node
 }
 
 func main() {
@@ -71,8 +73,14 @@ func main() {
 
 	// setting server
 	e.Server.Addr = fmt.Sprintf(":%v", "8080")
+
+	node, err := snowflake.NewNode(0)
+	if err != nil {
+		e.Logger.Fatalf("failed to generate snowflake node: %v", err)
+	}
 	h := &Handler{
-		DB: dbx,
+		DB:     dbx,
+		SFNode: node,
 	}
 
 	// e.Use(middleware.CORS())
@@ -1895,25 +1903,7 @@ func noContentResponse(c echo.Context, status int) error {
 
 // generateID uniqueなIDを生成する
 func (h *Handler) generateID() (int64, error) {
-	var updateErr error
-	for i := 0; i < 100; i++ {
-		res, err := h.DB.Exec("UPDATE id_generator SET id=LAST_INSERT_ID(id+1)")
-		if err != nil {
-			if merr, ok := err.(*mysql.MySQLError); ok && merr.Number == 1213 {
-				updateErr = err
-				continue
-			}
-			return 0, err
-		}
-
-		id, err := res.LastInsertId()
-		if err != nil {
-			return 0, err
-		}
-		return id, nil
-	}
-
-	return 0, fmt.Errorf("failed to generate id: %w", updateErr)
+	return int64(h.SFNode.Generate()), nil
 }
 
 // generateSessionID
