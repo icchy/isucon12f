@@ -17,6 +17,7 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
+	"github.com/labstack/echo-contrib/session"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
 	"github.com/pkg/errors"
@@ -63,6 +64,7 @@ func main() {
 		AllowMethods: []string{http.MethodGet, http.MethodPost},
 		AllowHeaders: []string{"Content-Type", "x-master-version", "x-session"},
 	}))
+	e.Use(session.Middleware(NewXSessionStore([]byte("secret"))))
 
 	// connect db
 	dbx, err := connectDB(false)
@@ -197,8 +199,8 @@ func (h *Handler) apiMiddleware(next echo.HandlerFunc) echo.HandlerFunc {
 // checkSessionMiddleware
 func (h *Handler) checkSessionMiddleware(next echo.HandlerFunc) echo.HandlerFunc {
 	return func(c echo.Context) error {
-		sessID := c.Request().Header.Get("x-session")
-		if sessID == "" {
+		sess, err := session.Get("session", c)
+		if err != nil {
 			return errorResponse(c, http.StatusUnauthorized, ErrUnauthorized)
 		}
 
@@ -212,24 +214,21 @@ func (h *Handler) checkSessionMiddleware(next echo.HandlerFunc) echo.HandlerFunc
 			return errorResponse(c, http.StatusInternalServerError, ErrGetRequestTime)
 		}
 
-		userSession := new(Session)
-		query := "SELECT * FROM user_sessions WHERE session_id=?"
-		if err := h.DB.Get(userSession, query, sessID); err != nil {
-			if err == sql.ErrNoRows {
-				return errorResponse(c, http.StatusUnauthorized, ErrUnauthorized)
-			}
-			return errorResponse(c, http.StatusInternalServerError, err)
+		sessUserID, ok := sess.Values["userID"].(int64)
+		if !ok {
+			return errorResponse(c, http.StatusUnauthorized, ErrUnauthorized)
 		}
 
-		if userSession.UserID != userID {
+		if sessUserID != userID {
 			return errorResponse(c, http.StatusForbidden, ErrForbidden)
 		}
 
-		if userSession.ExpiredAt < requestAt {
-			query = "DELETE FROM user_sessions WHERE session_id=?"
-			if _, err = h.DB.Exec(query, sessID); err != nil {
-				return errorResponse(c, http.StatusInternalServerError, err)
-			}
+		expiresAt, ok := sess.Values["expiresAt"].(int64)
+		if !ok {
+			return errorResponse(c, http.StatusUnauthorized, ErrUnauthorized)
+		}
+
+		if expiresAt < requestAt {
 			return errorResponse(c, http.StatusUnauthorized, ErrExpiredSession)
 		}
 
@@ -786,26 +785,19 @@ func (h *Handler) createUser(c echo.Context) error {
 	}
 
 	// generate session
-	sID, err := h.generateID()
+	sess, err := session.Get("session", c)
 	if err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
-	sessID, err := generateUUID()
-	if err != nil {
+
+	sess.Values["userID"] = user.ID
+	sess.Values["expiresAt"] = requestAt + 86400
+
+	if err := sess.Save(c.Request(), c.Response()); err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
-	sess := &Session{
-		ID:        sID,
-		UserID:    user.ID,
-		SessionID: sessID,
-		CreatedAt: requestAt,
-		UpdatedAt: requestAt,
-		ExpiredAt: requestAt + 86400,
-	}
-	query = "INSERT INTO user_sessions(id, user_id, session_id, created_at, updated_at, expired_at) VALUES (?, ?, ?, ?, ?, ?)"
-	if _, err = tx.Exec(query, sess.ID, sess.UserID, sess.SessionID, sess.CreatedAt, sess.UpdatedAt, sess.ExpiredAt); err != nil {
-		return errorResponse(c, http.StatusInternalServerError, err)
-	}
+
+	sessID := c.Response().Header().Get("x-session")
 
 	err = tx.Commit()
 	if err != nil {
@@ -815,7 +807,7 @@ func (h *Handler) createUser(c echo.Context) error {
 	return successResponse(c, &CreateUserResponse{
 		UserID:           user.ID,
 		ViewerID:         req.ViewerID,
-		SessionID:        sess.SessionID,
+		SessionID:        sessID,
 		CreatedAt:        requestAt,
 		UpdatedResources: makeUpdatedResources(requestAt, user, userDevice, initCards, []*UserDeck{initDeck}, nil, loginBonuses, presents),
 	})
@@ -881,30 +873,20 @@ func (h *Handler) login(c echo.Context) error {
 	defer tx.Rollback() //nolint:errcheck
 
 	// sessionを更新
-	query = "DELETE FROM user_sessions WHERE user_id=?"
-	if _, err = tx.Exec(query, req.UserID); err != nil {
-		return errorResponse(c, http.StatusInternalServerError, err)
-	}
-	sID, err := h.generateID()
+
+	sess, err := session.Get("session", c)
 	if err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
-	sessID, err := generateUUID()
-	if err != nil {
+
+	sess.Values["userID"] = req.UserID
+	sess.Values["expiresAt"] = requestAt + 86400
+
+	if err := sess.Save(c.Request(), c.Response()); err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
-	sess := &Session{
-		ID:        sID,
-		UserID:    req.UserID,
-		SessionID: sessID,
-		CreatedAt: requestAt,
-		UpdatedAt: requestAt,
-		ExpiredAt: requestAt + 86400,
-	}
-	query = "INSERT INTO user_sessions(id, user_id, session_id, created_at, updated_at, expired_at) VALUES (?, ?, ?, ?, ?, ?)"
-	if _, err = tx.Exec(query, sess.ID, sess.UserID, sess.SessionID, sess.CreatedAt, sess.UpdatedAt, sess.ExpiredAt); err != nil {
-		return errorResponse(c, http.StatusInternalServerError, err)
-	}
+
+	sessID := c.Response().Header().Get("x-session")
 
 	// すでにログインしているユーザはログイン処理をしない
 	if isCompleteTodayLogin(time.Unix(user.LastActivatedAt, 0), time.Unix(requestAt, 0)) {
@@ -923,7 +905,7 @@ func (h *Handler) login(c echo.Context) error {
 
 		return successResponse(c, &LoginResponse{
 			ViewerID:         req.ViewerID,
-			SessionID:        sess.SessionID,
+			SessionID:        sessID,
 			UpdatedResources: makeUpdatedResources(requestAt, user, nil, nil, nil, nil, nil, nil),
 		})
 	}
@@ -947,7 +929,7 @@ func (h *Handler) login(c echo.Context) error {
 
 	return successResponse(c, &LoginResponse{
 		ViewerID:         req.ViewerID,
-		SessionID:        sess.SessionID,
+		SessionID:        sessID,
 		UpdatedResources: makeUpdatedResources(requestAt, user, nil, nil, nil, nil, loginBonuses, presents),
 	})
 }
