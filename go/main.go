@@ -1588,18 +1588,38 @@ func (h *Handler) addExpToCard(c echo.Context) error {
 	}
 
 	// get target card
-	card := new(TargetUserCardData)
-	query := `
-	SELECT uc.id , uc.user_id , uc.card_id , uc.amount_per_sec , uc.level, uc.total_exp, im.amount_per_sec as 'base_amount_per_sec', im.max_level , im.max_amount_per_sec , im.base_exp_per_level
-	FROM user_cards as uc
-	INNER JOIN item_masters as im ON uc.card_id = im.id
-	WHERE uc.id = ? AND uc.user_id=?
-	`
-	if err = h.DB.Get(card, query, cardID, userID); err != nil {
+	itemMasters := []*ItemMaster{}
+	if err = h.DB.Select(&itemMasters, "SELECT * FROM item_masters"); err != nil {
+		return err
+	}
+
+	userCard := UserCard{}
+	if err = h.DB.Get(&userCard, "SELECT * FROM user_cards WHERE id = ? AND user_id = ?", cardID, userID); err != nil {
 		if err == sql.ErrNoRows {
 			return errorResponse(c, http.StatusNotFound, err)
 		}
 		return errorResponse(c, http.StatusInternalServerError, err)
+	}
+
+	var card *TargetUserCardData
+	card = nil
+	for _, im := range itemMasters {
+		if userCard.CardID == im.ID {
+			card = new(TargetUserCardData)
+			card.ID = userCard.ID
+			card.UserID = userCard.UserID
+			card.AmountPerSec = userCard.AmountPerSec
+			card.Level = userCard.Level
+			card.TotalExp = int(userCard.TotalExp)
+			card.BaseAmountPerSec = *im.AmountPerSec
+			card.MaxLevel = *im.MaxLevel
+			card.MaxAmountPerSec = *im.MaxAmountPerSec
+			card.BaseExpPerLevel = *im.BaseExpPerLevel
+		}
+	}
+
+	if card == nil {
+		return errorResponse(c, http.StatusNotFound, sql.ErrNoRows)
 	}
 
 	if card.Level == card.MaxLevel {
@@ -1608,19 +1628,42 @@ func (h *Handler) addExpToCard(c echo.Context) error {
 
 	// 消費アイテムの所持チェック
 	items := make([]*ConsumeUserItemData, 0)
-	query = `
-	SELECT ui.id, ui.user_id, ui.item_id, ui.item_type, ui.amount, ui.created_at, ui.updated_at, im.gained_exp
-	FROM user_items as ui
-	INNER JOIN item_masters as im ON ui.item_id = im.id
-	WHERE ui.item_type = 3 AND ui.id=? AND ui.user_id=?
-	`
+	ids := []int64{}
 	for _, v := range req.Items {
-		item := new(ConsumeUserItemData)
-		if err = h.DB.Get(item, query, v.ID, userID); err != nil {
-			if err == sql.ErrNoRows {
-				return errorResponse(c, http.StatusNotFound, err)
+		ids = append(ids, v.ID)
+	}
+
+	userItems := []*UserItem{}
+	query, args, err := sqlx.In("SELECT * FROM user_items WHERE user_id = ? AND item_type = 3 AND id IN (?)", userID, ids)
+	if err != nil {
+		return err
+	}
+	if err = h.DB.Select(&userItems, query, args...); err != nil {
+		return err
+	}
+
+	for _, v := range req.Items {
+		var item *ConsumeUserItemData
+		item = nil
+
+		for _, ui := range userItems {
+			for _, im := range itemMasters {
+				if ui.ItemID == im.ID && ui.ID == v.ID {
+					item = new(ConsumeUserItemData)
+					item.ID = ui.ID
+					item.UserID = ui.UserID
+					item.ItemID = ui.ItemID
+					item.ItemType = ui.ItemType
+					item.Amount = ui.Amount
+					item.CreatedAt = ui.CreatedAt
+					item.UpdatedAt = ui.UpdatedAt
+					item.GainedExp = *im.GainedExp
+				}
 			}
-			return errorResponse(c, http.StatusInternalServerError, err)
+		}
+
+		if item == nil {
+			return errorResponse(c, http.StatusNotFound, sql.ErrNoRows)
 		}
 
 		if v.Amount > item.Amount {
