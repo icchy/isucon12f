@@ -7,6 +7,7 @@ import (
 	"io"
 	"math"
 	"math/rand"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -177,7 +178,17 @@ func main() {
 	adminAuthAPI.POST("/admin/user/:userID/ban", h.adminBanUser)
 
 	e.Logger.Infof("Start server: address=%s", e.Server.Addr)
-	e.Logger.Error(e.StartServer(e.Server))
+
+	_ = os.Remove("/tmp/app.socket")
+	e.Listener, err = net.Listen("unix", "/tmp/app.socket")
+	if err != nil {
+		e.Logger.Fatalf("failed to create unix socket: %w", err)
+	}
+	if err := os.Chmod("/tmp/app.socket", 0777); err != nil {
+		e.Logger.Fatal("failed to set unix socket permission: %w", err)
+	}
+
+	e.Logger.Error(e.Start(""))
 }
 
 // adminMiddleware
