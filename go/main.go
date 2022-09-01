@@ -105,6 +105,7 @@ type Handler struct {
 	SFNode *snowflake.Node
 	TS     *TokenStore
 	MD     *MasterData
+	UB     *UserBanCache
 }
 
 func main() {
@@ -134,6 +135,7 @@ func main() {
 		SFNode: node,
 		TS:     NewTokenStore(),
 		MD:     NewMasterData(),
+		UB:     NewUserBanCache(),
 	}
 
 	// connect db
@@ -331,15 +333,8 @@ func (h *Handler) checkViewerID(userID int64, viewerID string) error {
 
 // checkBan
 func (h *Handler) checkBan(userID int64) (bool, error) {
-	banUser := new(UserBan)
-	query := "SELECT * FROM user_bans WHERE user_id=?"
-	if err := h.getDB(userID).Get(banUser, query, userID); err != nil {
-		if err == sql.ErrNoRows {
-			return false, nil
-		}
-		return false, err
-	}
-	return true, nil
+	banUser := h.UB.getUserBanByUserId(userID)
+	return banUser != nil, nil
 }
 
 // getRequestTime リクエストを受けた時間をコンテキストからunixtimeで取得する

@@ -238,3 +238,38 @@ func (m *MasterData) getLoginBonusRewardMasterByIdAndSeq(id int64, seq int) (*Lo
 
 	return nil, ErrLoginBonusRewardNotFound
 }
+
+type UserBanCache struct {
+	mtx      sync.RWMutex
+	UserBans []*UserBan
+}
+
+func NewUserBanCache() *UserBanCache {
+	return &UserBanCache{
+		UserBans: make([]*UserBan, 0),
+	}
+}
+
+func (u *UserBanCache) Load(h *Handler) error {
+	u.mtx.Lock()
+	defer u.mtx.Unlock()
+
+	query := "SELECT * FROM user_bans"
+	if err := h.getAdminDB().Select(&u.UserBans, query); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (u *UserBanCache) getUserBanByUserId(userID int64) *UserBan {
+	u.mtx.RLock()
+	defer u.mtx.RUnlock()
+
+	for _, v := range u.UserBans {
+		if v.UserID == userID {
+			return v
+		}
+	}
+	return nil
+}
