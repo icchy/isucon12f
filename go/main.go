@@ -1950,8 +1950,8 @@ func (h *Handler) updateDeck(c echo.Context) error {
 	defer tx.Rollback() //nolint:errcheck
 
 	// update data
-	query = "UPDATE user_decks SET updated_at=?, deleted_at=? WHERE user_id=? AND deleted_at IS NULL"
-	if _, err = tx.Exec(query, requestAt, requestAt, userID); err != nil {
+	query = "DELETE FROM user_decks WHERE user_id=?"
+	if _, err = tx.Exec(query, userID); err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
 
@@ -2031,7 +2031,7 @@ func (h *Handler) reward(c echo.Context) error {
 
 	// 使っているデッキの取得
 	deck := new(UserDeck)
-	query = "SELECT * FROM user_decks WHERE user_id=? AND deleted_at IS NULL"
+	query = "SELECT * FROM user_decks WHERE user_id=?"
 	if err = h.getDB(userID).Get(deck, query, userID); err != nil {
 		if err == sql.ErrNoRows {
 			return errorResponse(c, http.StatusNotFound, err)
@@ -2089,7 +2089,7 @@ func (h *Handler) home(c echo.Context) error {
 
 	// 装備情報
 	deck := new(UserDeck)
-	query := "SELECT * FROM user_decks WHERE user_id=? AND deleted_at IS NULL"
+	query := "SELECT * FROM user_decks WHERE user_id=?"
 	if err = h.getDB(userID).Get(deck, query, userID); err != nil {
 		if err != sql.ErrNoRows {
 			return errorResponse(c, http.StatusInternalServerError, err)
