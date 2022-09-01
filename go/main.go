@@ -2,9 +2,7 @@ package main
 
 import (
 	"database/sql"
-	"encoding/json"
 	"fmt"
-	"io"
 	"math"
 	"math/rand"
 	"net"
@@ -16,12 +14,14 @@ import (
 	"time"
 
 	"github.com/go-sql-driver/mysql"
+	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/cors"
+	"github.com/gofiber/fiber/v2/middleware/recover"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
-	"github.com/labstack/echo-contrib/session"
-	"github.com/labstack/echo/v4"
-	"github.com/labstack/echo/v4/middleware"
 	"github.com/pkg/errors"
+	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
 )
 
 var (
@@ -82,23 +82,6 @@ func (t *TokenStore) Del(token string, tokenType int) {
 	t.mtx.Unlock()
 }
 
-type JSONSerializer struct{}
-
-func (j *JSONSerializer) Serialize(c echo.Context, i interface{}, indent string) error {
-	enc := json.NewEncoder(c.Response())
-	return enc.Encode(i)
-}
-
-func (j *JSONSerializer) Deserialize(c echo.Context, i interface{}) error {
-	err := json.NewDecoder(c.Request().Body).Decode(i)
-	if ute, ok := err.(*json.UnmarshalTypeError); ok {
-		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("Unmarshal type error: expected=%v, got=%v, field=%v, offset=%v", ute.Type, ute.Value, ute.Field, ute.Offset)).SetInternal(err)
-	} else if se, ok := err.(*json.SyntaxError); ok {
-		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("Syntax error: offset=%v, error=%v", se.Offset, se.Error())).SetInternal(err)
-	}
-	return err
-}
-
 // ID生成のためのキャッシュ
 // Initializeでかならずクリアする必要がある
 var (
@@ -121,185 +104,179 @@ type Handler struct {
 	TS *TokenStore
 	MD *MasterDataCache
 	UB *UserBanCache
+	XS *XSession
 }
 
 func main() {
+	zerolog.TimeFieldFormat = zerolog.TimeFormatUnix
 	clearIdGenerateCache()
 	rand.Seed(time.Now().UnixNano())
 	time.Local = time.FixedZone("Local", 9*60*60)
 
-	e := echo.New()
-	e.JSONSerializer = &JSONSerializer{}
-	// e.Use(middleware.Logger())
-	e.Use(middleware.Recover())
-	e.Use(middleware.CORSWithConfig(middleware.CORSConfig{
-		AllowOrigins: []string{"*"},
-		AllowMethods: []string{http.MethodGet, http.MethodPost},
-		AllowHeaders: []string{"Content-Type", "x-master-version", "x-session"},
+	app := fiber.New()
+	app.Use(recover.New())
+	app.Use(cors.New(cors.Config{
+		AllowOrigins: "*",
+		AllowMethods: "GET, POST",
+		AllowHeaders: "Content-Type, x-master-version, x-session",
 	}))
-	e.Use(session.Middleware(NewXSessionStore([]byte("secret"))))
+
+	// e.JSONSerializer = &JSONSerializer{}
+	// e.Use(middleware.Logger())
 
 	// setting server
-	e.Server.Addr = fmt.Sprintf(":%v", "8080")
 
 	h := &Handler{
 		DB: make([]*sqlx.DB, 0),
 		TS: NewTokenStore(),
 		MD: NewMasterDataCache(),
 		UB: NewUserBanCache(),
+		XS: NewXSession([]byte("d589788be168c655979c926723310d1b"), []byte("44eb50f2266a78563209058b39aaf289")),
 	}
 
 	// connect db
 	if err := h.connectDBHosts(); err != nil {
-		e.Logger.Fatalf("failed to connect to db: %v", err)
+		log.Fatal().Err(err).Msg("failed to connect to db")
 	}
 
 	if err := h.MD.Load(h); err != nil {
-		e.Logger.Fatalf("failed to load master data: %v", err)
+		log.Fatal().Err(err).Msg("failed to load master data")
 	}
 
 	// e.Use(middleware.CORS())
-	e.Use(middleware.CORSWithConfig(middleware.CORSConfig{}))
+	app.Use(cors.New(cors.Config{}))
 
 	// utility
-	e.POST("/initialize", h.initialize)
-	e.GET("/health", h.health)
+	app.Post("/initialize", h.initialize)
+	app.Get("/health", h.health)
 
 	// feature
-	API := e.Group("", h.apiMiddleware)
-	API.POST("/user", h.createUser)
-	API.POST("/login", h.login)
-	sessCheckAPI := API.Group("", h.checkSessionMiddleware)
-	sessCheckAPI.GET("/user/:userID/gacha/index", h.listGacha)
-	sessCheckAPI.POST("/user/:userID/gacha/draw/:gachaID/:n", h.drawGacha)
-	sessCheckAPI.GET("/user/:userID/present/index/:n", h.listPresent)
-	sessCheckAPI.POST("/user/:userID/present/receive", h.receivePresent)
-	sessCheckAPI.GET("/user/:userID/item", h.listItem)
-	sessCheckAPI.POST("/user/:userID/card/addexp/:cardID", h.addExpToCard)
-	sessCheckAPI.POST("/user/:userID/card", h.updateDeck)
-	sessCheckAPI.POST("/user/:userID/reward", h.reward)
-	sessCheckAPI.GET("/user/:userID/home", h.home)
+	API := app.Group("", h.apiMiddleware)
+	API.Post("/user", h.createUser)
+	API.Post("/login", h.login)
+	sessCheckAPI := API.Group("/user/:userID", h.checkSessionMiddleware)
+	sessCheckAPI.Get("/gacha/index", h.listGacha)
+	sessCheckAPI.Post("/gacha/draw/:gachaID/:n", h.drawGacha)
+	sessCheckAPI.Get("/present/index/:n", h.listPresent)
+	sessCheckAPI.Post("/present/receive", h.receivePresent)
+	sessCheckAPI.Get("/item", h.listItem)
+	sessCheckAPI.Post("/card/addexp/:cardID", h.addExpToCard)
+	sessCheckAPI.Post("/card", h.updateDeck)
+	sessCheckAPI.Post("/reward", h.reward)
+	sessCheckAPI.Get("/home", h.home)
 
 	// admin
-	adminAPI := e.Group("", h.adminMiddleware)
-	adminAPI.POST("/admin/login", h.adminLogin)
+	adminAPI := app.Group("", h.adminMiddleware)
+	adminAPI.Post("/admin/login", h.adminLogin)
 	adminAuthAPI := adminAPI.Group("", h.adminSessionCheckMiddleware)
-	adminAuthAPI.DELETE("/admin/logout", h.adminLogout)
-	adminAuthAPI.GET("/admin/master", h.adminListMaster)
-	adminAuthAPI.PUT("/admin/master", h.adminUpdateMaster)
-	adminAuthAPI.GET("/admin/user/:userID", h.adminUser)
-	adminAuthAPI.POST("/admin/user/:userID/ban", h.adminBanUser)
+	adminAuthAPI.Delete("/admin/logout", h.adminLogout)
+	adminAuthAPI.Get("/admin/master", h.adminListMaster)
+	adminAuthAPI.Put("/admin/master", h.adminUpdateMaster)
+	adminAuthAPI.Get("/admin/user/:userID", h.adminUser)
+	adminAuthAPI.Post("/admin/user/:userID/ban", h.adminBanUser)
 
-	e.Logger.Infof("Start server: address=%s", e.Server.Addr)
+	// e.Logger.Infof("Start server: address=%s", e.Server.Addr)
 
 	_ = os.Remove("/tmp/app.socket")
 	var err error
-	e.Listener, err = net.Listen("unix", "/tmp/app.socket")
+	listener, err := net.Listen("unix", "/tmp/app.socket")
 	if err != nil {
-		e.Logger.Fatalf("failed to create unix socket: %w", err)
+		log.Fatal().Err(err).Msg("failed to create unix socket")
 	}
 	if err := os.Chmod("/tmp/app.socket", 0777); err != nil {
-		e.Logger.Fatal("failed to set unix socket permission: %w", err)
+		log.Fatal().Err(err).Msg("failed to set unix socket permission")
 	}
 
-	e.Logger.Error(e.Start(""))
+	log.Fatal().Err(app.Listener(listener))
 }
 
 // adminMiddleware
-func (h *Handler) adminMiddleware(next echo.HandlerFunc) echo.HandlerFunc {
-	return func(c echo.Context) error {
-		requestAt := time.Now()
-		c.Set("requestTime", requestAt.Unix())
+func (h *Handler) adminMiddleware(c *fiber.Ctx) error {
+	requestAt := time.Now()
+	c.Locals("requestTime", requestAt.Unix())
 
-		// next
-		if err := next(c); err != nil {
-			c.Error(err)
-		}
-		return nil
+	// next
+	if err := c.Next(); err != nil {
+		return err
 	}
+	return nil
 }
 
 // apiMiddleware
-func (h *Handler) apiMiddleware(next echo.HandlerFunc) echo.HandlerFunc {
-	return func(c echo.Context) error {
-		requestAt, err := time.Parse(time.RFC1123, c.Request().Header.Get("x-isu-date"))
-		if err != nil {
-			requestAt = time.Now()
-		}
-		c.Set("requestTime", requestAt.Unix())
+func (h *Handler) apiMiddleware(c *fiber.Ctx) error {
+	requestAt, err := time.Parse(time.RFC1123, c.Get("x-isu-date"))
+	if err != nil {
+		requestAt = time.Now()
+	}
+	c.Locals("requestTime", requestAt.Unix())
 
-		// マスタ確認
-		masterVersion, err := h.MD.getVersionMaster()
+	// マスタ確認
+	masterVersion, err := h.MD.getVersionMaster()
+	if err != nil {
+		return errorResponse(c, http.StatusInternalServerError, err)
+	}
+
+	if masterVersion.MasterVersion != c.Get("x-master-version") {
+		return errorResponse(c, http.StatusUnprocessableEntity, ErrInvalidMasterVersion)
+	}
+
+	// check ban
+	userID, err := getUserID(c)
+	if err == nil && userID != 0 {
+		isBan, err := h.checkBan(userID)
 		if err != nil {
 			return errorResponse(c, http.StatusInternalServerError, err)
 		}
-
-		if masterVersion.MasterVersion != c.Request().Header.Get("x-master-version") {
-			return errorResponse(c, http.StatusUnprocessableEntity, ErrInvalidMasterVersion)
+		if isBan {
+			return errorResponse(c, http.StatusForbidden, ErrForbidden)
 		}
-
-		// check ban
-		userID, err := getUserID(c)
-		if err == nil && userID != 0 {
-			isBan, err := h.checkBan(userID)
-			if err != nil {
-				return errorResponse(c, http.StatusInternalServerError, err)
-			}
-			if isBan {
-				return errorResponse(c, http.StatusForbidden, ErrForbidden)
-			}
-		}
-
-		// next
-		if err := next(c); err != nil {
-			c.Error(err)
-		}
-		return nil
 	}
+
+	// next
+	return c.Next()
 }
 
 // checkSessionMiddleware
-func (h *Handler) checkSessionMiddleware(next echo.HandlerFunc) echo.HandlerFunc {
-	return func(c echo.Context) error {
-		sess, err := session.Get("session", c)
-		if err != nil {
-			return errorResponse(c, http.StatusUnauthorized, ErrUnauthorized)
-		}
+func (h *Handler) checkSessionMiddleware(c *fiber.Ctx) error {
+	values := make(map[string]interface{})
 
-		userID, err := getUserID(c)
-		if err != nil {
-			return errorResponse(c, http.StatusBadRequest, err)
-		}
-
-		requestAt, err := getRequestTime(c)
-		if err != nil {
-			return errorResponse(c, http.StatusInternalServerError, ErrGetRequestTime)
-		}
-
-		sessUserID, ok := sess.Values["userID"].(int64)
-		if !ok {
-			return errorResponse(c, http.StatusUnauthorized, ErrUnauthorized)
-		}
-
-		if sessUserID != userID {
-			return errorResponse(c, http.StatusForbidden, ErrForbidden)
-		}
-
-		expiresAt, ok := sess.Values["expiresAt"].(int64)
-		if !ok {
-			return errorResponse(c, http.StatusUnauthorized, ErrUnauthorized)
-		}
-
-		if expiresAt < requestAt {
-			return errorResponse(c, http.StatusUnauthorized, ErrExpiredSession)
-		}
-
-		// next
-		if err := next(c); err != nil {
-			c.Error(err)
-		}
-		return nil
+	if err := h.XS.Get(c, "session", &values); err != nil {
+		return errorResponse(c, http.StatusUnauthorized, ErrUnauthorized)
 	}
+
+	userID, err := getUserID(c)
+	if err != nil {
+		return errorResponse(c, http.StatusBadRequest, err)
+	}
+
+	requestAt, err := getRequestTime(c)
+	if err != nil {
+		return errorResponse(c, http.StatusInternalServerError, ErrGetRequestTime)
+	}
+
+	sessUserID, ok := values["userID"].(int64)
+	if !ok {
+		return errorResponse(c, http.StatusUnauthorized, ErrUnauthorized)
+	}
+
+	if sessUserID != userID {
+		return errorResponse(c, http.StatusForbidden, ErrForbidden)
+	}
+
+	expiresAt, ok := values["expiresAt"].(int64)
+	if !ok {
+		return errorResponse(c, http.StatusUnauthorized, ErrUnauthorized)
+	}
+
+	if expiresAt < requestAt {
+		return errorResponse(c, http.StatusUnauthorized, ErrExpiredSession)
+	}
+
+	// next
+	if err := c.Next(); err != nil {
+		return err
+	}
+	return nil
 }
 
 // checkOneTimeToken
@@ -350,8 +327,8 @@ func (h *Handler) checkBan(userID int64) (bool, error) {
 }
 
 // getRequestTime リクエストを受けた時間をコンテキストからunixtimeで取得する
-func getRequestTime(c echo.Context) (int64, error) {
-	v := c.Get("requestTime")
+func getRequestTime(c *fiber.Ctx) (int64, error) {
+	v := c.Locals("requestTime")
 	if requestTime, ok := v.(int64); ok {
 		return requestTime, nil
 	}
@@ -800,14 +777,14 @@ func (h *Handler) obtainItem(tx *sqlx.Tx, userID, itemID int64, itemType int, ob
 
 // initialize 初期化処理
 // POST /initialize
-func (h *Handler) initialize(c echo.Context) error {
+func (h *Handler) initialize(c *fiber.Ctx) error {
 	if err := h.testDBHosts(); err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
 
 	out, err := exec.Command("/bin/sh", "-c", SQLDirectory+"init.sh").CombinedOutput()
 	if err != nil {
-		c.Logger().Errorf("Failed to initialize %s: %v", string(out), err)
+		log.Fatal().Err(err).Str("stdout", string(out)).Msg("Failed to initialize")
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
 
@@ -828,9 +805,8 @@ type InitializeResponse struct {
 
 // createUser ユーザの作成
 // POST /user
-func (h *Handler) createUser(c echo.Context) error {
+func (h *Handler) createUser(c *fiber.Ctx) error {
 	// parse body
-	defer c.Request().Body.Close()
 	req := new(CreateUserRequest)
 	if err := parseRequestBody(c, req); err != nil {
 		return errorResponse(c, http.StatusBadRequest, err)
@@ -951,19 +927,14 @@ func (h *Handler) createUser(c echo.Context) error {
 	}
 
 	// generate session
-	sess, err := session.Get("session", c)
+	values := make(map[string]interface{})
+	values["userID"] = user.ID
+	values["expiresAt"] = requestAt + 86400
+
+	sessID, err := h.XS.Save("session", values)
 	if err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
-
-	sess.Values["userID"] = user.ID
-	sess.Values["expiresAt"] = requestAt + 86400
-
-	if err := sess.Save(c.Request(), c.Response()); err != nil {
-		return errorResponse(c, http.StatusInternalServerError, err)
-	}
-
-	sessID := c.Response().Header().Get("x-session")
 
 	err = tx.Commit()
 	if err != nil {
@@ -994,9 +965,12 @@ type CreateUserResponse struct {
 
 // login ログイン
 // POST /login
-func (h *Handler) login(c echo.Context) error {
-	defer c.Request().Body.Close()
+func (h *Handler) login(c *fiber.Ctx) error {
 	req := new(LoginRequest)
+	if err := parseRequestBody(c, req); err != nil {
+		return errorResponse(c, http.StatusBadRequest, err)
+	}
+
 	if err := parseRequestBody(c, req); err != nil {
 		return errorResponse(c, http.StatusBadRequest, err)
 	}
@@ -1040,19 +1014,14 @@ func (h *Handler) login(c echo.Context) error {
 
 	// sessionを更新
 
-	sess, err := session.Get("session", c)
+	values := make(map[string]interface{})
+	values["userID"] = req.UserID
+	values["expiresAt"] = requestAt + 86400
+
+	sessID, err := h.XS.Save("session", values)
 	if err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
-
-	sess.Values["userID"] = req.UserID
-	sess.Values["expiresAt"] = requestAt + 86400
-
-	if err := sess.Save(c.Request(), c.Response()); err != nil {
-		return errorResponse(c, http.StatusInternalServerError, err)
-	}
-
-	sessID := c.Response().Header().Get("x-session")
 
 	// すでにログインしているユーザはログイン処理をしない
 	if isCompleteTodayLogin(time.Unix(user.LastActivatedAt, 0), time.Unix(requestAt, 0)) {
@@ -1113,7 +1082,7 @@ type LoginResponse struct {
 
 // listGacha ガチャ一覧
 // GET /user/{userID}/gacha/index
-func (h *Handler) listGacha(c echo.Context) error {
+func (h *Handler) listGacha(c *fiber.Ctx) error {
 	_, err := getUserID(c)
 	if err != nil {
 		return errorResponse(c, http.StatusBadRequest, err)
@@ -1177,18 +1146,18 @@ type GachaData struct {
 
 // drawGacha ガチャを引く
 // POST /user/{userID}/gacha/draw/{gachaID}/{n}
-func (h *Handler) drawGacha(c echo.Context) error {
+func (h *Handler) drawGacha(c *fiber.Ctx) error {
 	userID, err := getUserID(c)
 	if err != nil {
 		return errorResponse(c, http.StatusBadRequest, err)
 	}
 
-	gachaID := c.Param("gachaID")
+	gachaID := c.Params("gachaID")
 	if gachaID == "" {
 		return errorResponse(c, http.StatusBadRequest, fmt.Errorf("invalid gachaID"))
 	}
 
-	gachaCount, err := strconv.ParseInt(c.Param("n"), 10, 64)
+	gachaCount, err := strconv.ParseInt(c.Params("n"), 10, 64)
 	if err != nil {
 		return errorResponse(c, http.StatusBadRequest, err)
 	}
@@ -1196,7 +1165,6 @@ func (h *Handler) drawGacha(c echo.Context) error {
 		return errorResponse(c, http.StatusBadRequest, fmt.Errorf("invalid draw gacha times"))
 	}
 
-	defer c.Request().Body.Close()
 	req := new(DrawGachaRequest)
 	if err = parseRequestBody(c, req); err != nil {
 		return errorResponse(c, http.StatusBadRequest, err)
@@ -1329,8 +1297,8 @@ type DrawGachaResponse struct {
 
 // listPresent プレゼント一覧
 // GET /user/{userID}/present/index/{n}
-func (h *Handler) listPresent(c echo.Context) error {
-	n, err := strconv.Atoi(c.Param("n"))
+func (h *Handler) listPresent(c *fiber.Ctx) error {
+	n, err := strconv.Atoi(c.Params("n"))
 	if err != nil {
 		return errorResponse(c, http.StatusBadRequest, fmt.Errorf("invalid index number (n) parameter"))
 	}
@@ -1377,9 +1345,8 @@ type ListPresentResponse struct {
 
 // receivePresent プレゼント受け取り
 // POST /user/{userID}/present/receive
-func (h *Handler) receivePresent(c echo.Context) error {
+func (h *Handler) receivePresent(c *fiber.Ctx) error {
 	// read body
-	defer c.Request().Body.Close()
 	req := new(ReceivePresentRequest)
 	if err := parseRequestBody(c, req); err != nil {
 		return errorResponse(c, http.StatusBadRequest, err)
@@ -1602,7 +1569,7 @@ type ReceivePresentResponse struct {
 
 // listItem アイテムリスト
 // GET /user/{userID}/item
-func (h *Handler) listItem(c echo.Context) error {
+func (h *Handler) listItem(c *fiber.Ctx) error {
 	userID, err := getUserID(c)
 	if err != nil {
 		return errorResponse(c, http.StatusBadRequest, err)
@@ -1657,8 +1624,8 @@ type ListItemResponse struct {
 
 // addExpToCard 装備強化
 // POST /user/{userID}/card/addexp/{cardID}
-func (h *Handler) addExpToCard(c echo.Context) error {
-	cardID, err := strconv.ParseInt(c.Param("cardID"), 10, 64)
+func (h *Handler) addExpToCard(c *fiber.Ctx) error {
+	cardID, err := strconv.ParseInt(c.Params("cardID"), 10, 64)
 	if err != nil {
 		return errorResponse(c, http.StatusBadRequest, err)
 	}
@@ -1669,7 +1636,6 @@ func (h *Handler) addExpToCard(c echo.Context) error {
 	}
 
 	// read body
-	defer c.Request().Body.Close()
 	req := new(AddExpToCardRequest)
 	if err := parseRequestBody(c, req); err != nil {
 		return errorResponse(c, http.StatusBadRequest, err)
@@ -1898,7 +1864,7 @@ type TargetUserCardData struct {
 
 // updateDeck 装備変更
 // POST /user/{userID}/card
-func (h *Handler) updateDeck(c echo.Context) error {
+func (h *Handler) updateDeck(c *fiber.Ctx) error {
 
 	userID, err := getUserID(c)
 	if err != nil {
@@ -1906,7 +1872,6 @@ func (h *Handler) updateDeck(c echo.Context) error {
 	}
 
 	// read body
-	defer c.Request().Body.Close()
 	req := new(UpdateDeckRequest)
 	if err := parseRequestBody(c, req); err != nil {
 		return errorResponse(c, http.StatusBadRequest, err)
@@ -1994,14 +1959,13 @@ type UpdateDeckResponse struct {
 
 // reward ゲーム報酬受取
 // POST /user/{userID}/reward
-func (h *Handler) reward(c echo.Context) error {
+func (h *Handler) reward(c *fiber.Ctx) error {
 	userID, err := getUserID(c)
 	if err != nil {
 		return errorResponse(c, http.StatusBadRequest, err)
 	}
 
 	// parse body
-	defer c.Request().Body.Close()
 	req := new(RewardRequest)
 	if err := parseRequestBody(c, req); err != nil {
 		return errorResponse(c, http.StatusBadRequest, err)
@@ -2076,7 +2040,7 @@ type RewardResponse struct {
 
 // home ホーム取得
 // GET /user/{userID}/home
-func (h *Handler) home(c echo.Context) error {
+func (h *Handler) home(c *fiber.Ctx) error {
 	userID, err := getUserID(c)
 	if err != nil {
 		return errorResponse(c, http.StatusBadRequest, err)
@@ -2146,15 +2110,15 @@ type HomeResponse struct {
 // util
 
 // health ヘルスチェック
-func (h *Handler) health(c echo.Context) error {
-	return c.String(http.StatusOK, "OK")
+func (h *Handler) health(c *fiber.Ctx) error {
+	return c.Status(fiber.StatusOK).SendString("OK")
 }
 
 // errorResponse returns error.
-func errorResponse(c echo.Context, statusCode int, err error) error {
-	c.Logger().Errorf("status=%d, err=%+v", statusCode, errors.WithStack(err))
+func errorResponse(c *fiber.Ctx, statusCode int, err error) error {
+	log.Error().Int("status", statusCode).Err(errors.WithStack(err)).Msg("")
 
-	return c.JSON(statusCode, struct {
+	return c.Status(statusCode).JSON(struct {
 		StatusCode int    `json:"status_code"`
 		Message    string `json:"message"`
 	}{
@@ -2164,13 +2128,13 @@ func errorResponse(c echo.Context, statusCode int, err error) error {
 }
 
 // successResponse responds success.
-func successResponse(c echo.Context, v interface{}) error {
-	return c.JSON(http.StatusOK, v)
+func successResponse(c *fiber.Ctx, v interface{}) error {
+	return c.JSON(v)
 }
 
 // noContentResponse
-func noContentResponse(c echo.Context, status int) error {
-	return c.NoContent(status)
+func noContentResponse(c *fiber.Ctx, status int) error {
+	return c.SendStatus(status)
 }
 
 // generateID uniqueなIDを生成する
@@ -2217,8 +2181,8 @@ func generateUUID() (string, error) {
 }
 
 // getUserID gets userID by path param.
-func getUserID(c echo.Context) (int64, error) {
-	return strconv.ParseInt(c.Param("userID"), 10, 64)
+func getUserID(c *fiber.Ctx) (int64, error) {
+	return strconv.ParseInt(c.Params("userID"), 10, 64)
 }
 
 // getEnv gets environment variable.
@@ -2231,14 +2195,11 @@ func getEnv(key, defaultVal string) string {
 }
 
 // parseRequestBody parses request body.
-func parseRequestBody(c echo.Context, dist interface{}) error {
-	buf, err := io.ReadAll(c.Request().Body)
-	if err != nil {
+func parseRequestBody(c *fiber.Ctx, dist interface{}) error {
+	if err := c.BodyParser(&dist); err != nil {
 		return ErrInvalidRequestBody
 	}
-	if err = json.Unmarshal(buf, &dist); err != nil {
-		return ErrInvalidRequestBody
-	}
+
 	return nil
 }
 

@@ -1,49 +1,47 @@
 package main
 
 import (
-	"net/http"
+	"sync"
 
+	"github.com/gofiber/fiber/v2"
 	"github.com/gorilla/securecookie"
-	"github.com/gorilla/sessions"
 )
 
-type XSessionStore struct {
-	Codecs  []securecookie.Codec
-	Options *sessions.Options
+type XSession struct {
+	s   *securecookie.SecureCookie
+	mtx sync.Mutex
 }
 
-func NewXSessionStore(keyPairs ...[]byte) *XSessionStore {
-	cs := &XSessionStore{
-		Codecs: securecookie.CodecsFromPairs(keyPairs...),
+func NewXSession(hashKey, blockKey []byte) *XSession {
+	return &XSession{
+		s: securecookie.New(hashKey, blockKey),
 	}
-	return cs
 }
 
-func (s *XSessionStore) Get(r *http.Request, name string) (*sessions.Session, error) {
-	return sessions.GetRegistry(r).Get(s, name)
-}
-
-func (s *XSessionStore) New(r *http.Request, name string) (*sessions.Session, error) {
-	session := sessions.NewSession(s, name)
-	session.IsNew = true
-
-	sessValue := r.Header.Get("x-session")
-	if sessValue == "" {
-		return session, nil
-	}
-
-	if err := securecookie.DecodeMulti(name, sessValue, &session.Values, s.Codecs...); err != nil {
-		return session, err
-	}
-	session.IsNew = false
-	return session, nil
-}
-
-func (s *XSessionStore) Save(r *http.Request, w http.ResponseWriter, session *sessions.Session) error {
-	encoded, err := securecookie.EncodeMulti(session.Name(), session.Values, s.Codecs...)
+func (sess *XSession) encode(name string, data map[string]interface{}) (string, error) {
+	encoded, err := sess.s.Encode(name, data)
 	if err != nil {
+		return "", err
+	}
+	return encoded, nil
+}
+
+func (sess *XSession) decode(name, encoded string, dest *map[string]interface{}) error {
+	if err := sess.s.Decode(name, encoded, &dest); err != nil {
 		return err
 	}
-	w.Header().Set("x-session", encoded)
+
 	return nil
+}
+
+func (sess *XSession) Get(c *fiber.Ctx, name string, dest *map[string]interface{}) error {
+	encoded := c.Get("x-session")
+	if err := sess.decode(name, encoded, dest); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (sess *XSession) Save(name string, data map[string]interface{}) (string, error) {
+	return sess.encode(name, data)
 }

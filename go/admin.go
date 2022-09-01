@@ -8,7 +8,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/labstack/echo/v4"
+	"github.com/gofiber/fiber/v2"
+	"github.com/rs/zerolog/log"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -16,45 +17,42 @@ import (
 // admin
 
 // adminSessionCheckMiddleware
-func (h *Handler) adminSessionCheckMiddleware(next echo.HandlerFunc) echo.HandlerFunc {
-	return func(c echo.Context) error {
-		sessID := c.Request().Header.Get("x-session")
+func (h *Handler) adminSessionCheckMiddleware(c *fiber.Ctx) error {
+	sessID := c.Get("x-session")
 
-		adminSession := new(Session)
-		query := "SELECT * FROM admin_sessions WHERE session_id=? AND deleted_at IS NULL"
-		if err := h.getAdminDB().Get(adminSession, query, sessID); err != nil {
-			if err == sql.ErrNoRows {
-				return errorResponse(c, http.StatusUnauthorized, ErrUnauthorized)
-			}
+	adminSession := new(Session)
+	query := "SELECT * FROM admin_sessions WHERE session_id=? AND deleted_at IS NULL"
+	if err := h.getAdminDB().Get(adminSession, query, sessID); err != nil {
+		if err == sql.ErrNoRows {
+			return errorResponse(c, http.StatusUnauthorized, ErrUnauthorized)
+		}
+		return errorResponse(c, http.StatusInternalServerError, err)
+	}
+
+	requestAt, err := getRequestTime(c)
+	if err != nil {
+		return errorResponse(c, http.StatusInternalServerError, ErrGetRequestTime)
+	}
+
+	if adminSession.ExpiredAt < requestAt {
+		query = "UPDATE admin_sessions SET deleted_at=? WHERE session_id=?"
+		if _, err = h.getAdminDB().Exec(query, requestAt, sessID); err != nil {
 			return errorResponse(c, http.StatusInternalServerError, err)
 		}
+		return errorResponse(c, http.StatusUnauthorized, ErrExpiredSession)
+	}
 
-		requestAt, err := getRequestTime(c)
-		if err != nil {
-			return errorResponse(c, http.StatusInternalServerError, ErrGetRequestTime)
-		}
-
-		if adminSession.ExpiredAt < requestAt {
-			query = "UPDATE admin_sessions SET deleted_at=? WHERE session_id=?"
-			if _, err = h.getAdminDB().Exec(query, requestAt, sessID); err != nil {
-				return errorResponse(c, http.StatusInternalServerError, err)
-			}
-			return errorResponse(c, http.StatusUnauthorized, ErrExpiredSession)
-		}
-
-		// next
-		if err := next(c); err != nil {
-			c.Error(err)
-		}
+	// next
+	if err := c.Next(); err != nil {
 		return nil
 	}
+	return nil
 }
 
 // adminLogin 管理者権限ログイン
 // POST /admin/login
-func (h *Handler) adminLogin(c echo.Context) error {
+func (h *Handler) adminLogin(c *fiber.Ctx) error {
 	// read body
-	defer c.Request().Body.Close()
 	req := new(AdminLoginRequest)
 	if err := parseRequestBody(c, req); err != nil {
 		return errorResponse(c, http.StatusBadRequest, err)
@@ -141,8 +139,8 @@ type AdminLoginResponse struct {
 
 // adminLogout 管理者権限ログアウト
 // DELETE /admin/logout
-func (h *Handler) adminLogout(c echo.Context) error {
-	sessID := c.Request().Header.Get("x-session")
+func (h *Handler) adminLogout(c *fiber.Ctx) error {
+	sessID := c.Get("x-session")
 
 	requestAt, err := getRequestTime(c)
 	if err != nil {
@@ -159,7 +157,7 @@ func (h *Handler) adminLogout(c echo.Context) error {
 
 // adminListMaster マスタデータ閲覧
 // GET /admin/master
-func (h *Handler) adminListMaster(c echo.Context) error {
+func (h *Handler) adminListMaster(c *fiber.Ctx) error {
 	masterVersions := make([]*VersionMaster, 0)
 	if err := h.getAdminDB().Select(&masterVersions, "SELECT * FROM version_masters"); err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
@@ -220,7 +218,7 @@ type AdminListMasterResponse struct {
 
 // adminUpdateMaster マスタデータ更新
 // PUT /admin/master
-func (h *Handler) adminUpdateMaster(c echo.Context) error {
+func (h *Handler) adminUpdateMaster(c *fiber.Ctx) error {
 	tx, err := h.getAdminDB().Beginx()
 	if err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
@@ -252,7 +250,7 @@ func (h *Handler) adminUpdateMaster(c echo.Context) error {
 			return errorResponse(c, http.StatusInternalServerError, err)
 		}
 	} else {
-		c.Logger().Debug("Skip Update Master: versionMaster")
+		log.Debug().Msg("Skip Update Master: versionMaster")
 	}
 
 	// item
@@ -291,7 +289,7 @@ func (h *Handler) adminUpdateMaster(c echo.Context) error {
 			return errorResponse(c, http.StatusInternalServerError, err)
 		}
 	} else {
-		c.Logger().Debug("Skip Update Master: itemMaster")
+		log.Debug().Msg("Skip Update Master: itemMaster")
 	}
 
 	// gacha
@@ -326,7 +324,7 @@ func (h *Handler) adminUpdateMaster(c echo.Context) error {
 			return errorResponse(c, http.StatusInternalServerError, err)
 		}
 	} else {
-		c.Logger().Debug("Skip Update Master: gachaMaster")
+		log.Debug().Msg("Skip Update Master: gachaMaster")
 	}
 
 	// gacha item
@@ -362,7 +360,7 @@ func (h *Handler) adminUpdateMaster(c echo.Context) error {
 			return errorResponse(c, http.StatusInternalServerError, err)
 		}
 	} else {
-		c.Logger().Debug("Skip Update Master: gachaItemMaster")
+		log.Debug().Msg("Skip Update Master: gachaItemMaster")
 	}
 
 	// present all
@@ -399,7 +397,7 @@ func (h *Handler) adminUpdateMaster(c echo.Context) error {
 			return errorResponse(c, http.StatusInternalServerError, err)
 		}
 	} else {
-		c.Logger().Debug("Skip Update Master: presentAllMaster")
+		log.Debug().Msg("Skip Update Master: presentAllMaster")
 	}
 
 	// login bonuses
@@ -438,7 +436,7 @@ func (h *Handler) adminUpdateMaster(c echo.Context) error {
 			return errorResponse(c, http.StatusInternalServerError, err)
 		}
 	} else {
-		c.Logger().Debug("Skip Update Master: loginBonusMaster")
+		log.Debug().Msg("Skip Update Master: loginBonusMaster")
 	}
 
 	// login bonus rewards
@@ -474,7 +472,7 @@ func (h *Handler) adminUpdateMaster(c echo.Context) error {
 			return errorResponse(c, http.StatusInternalServerError, err)
 		}
 	} else {
-		c.Logger().Debug("Skip Update Master: loginBonusRewardMaster")
+		log.Debug().Msg("Skip Update Master: loginBonusRewardMaster")
 	}
 
 	activeMaster := new(VersionMaster)
@@ -501,7 +499,7 @@ type AdminUpdateMasterResponse struct {
 }
 
 // readFromFileToCSV ファイルからcsvレコードを取得する
-func readFormFileToCSV(c echo.Context, name string) ([][]string, error) {
+func readFormFileToCSV(c *fiber.Ctx, name string) ([][]string, error) {
 	file, err := c.FormFile(name)
 	if err != nil {
 		return nil, ErrNoFormFile
@@ -529,7 +527,7 @@ func readFormFileToCSV(c echo.Context, name string) ([][]string, error) {
 
 // adminUser ユーザの詳細画面
 // GET /admin/user/{userID}
-func (h *Handler) adminUser(c echo.Context) error {
+func (h *Handler) adminUser(c *fiber.Ctx) error {
 	userID, err := getUserID(c)
 	if err != nil {
 		return errorResponse(c, http.StatusBadRequest, err)
@@ -619,7 +617,7 @@ type AdminUserResponse struct {
 
 // adminBanUser ユーザBAN処理
 // POST /admin/user/{userId}/ban
-func (h *Handler) adminBanUser(c echo.Context) error {
+func (h *Handler) adminBanUser(c *fiber.Ctx) error {
 	userID, err := getUserID(c)
 	if err != nil {
 		return errorResponse(c, http.StatusBadRequest, err)
