@@ -62,9 +62,9 @@ mysql -u"$ISUCON_DB_USER" \
 		--port "$ISUCON_DB_PORT" \
 		"$ISUCON_DB_NAME" < 6_id_generator_init.sql
 
-echo "set global slow_query_log_file = '/var/log/mysql/mysql-slow.log'; set global long_query_time = 0; set global slow_query_log = ON;" | mysql -u"$ISUCON_DB_USER" \
-		-p"$ISUCON_DB_PASSWORD" \
-		--host "$ISUCON_DB_HOST" \
-		--port "$ISUCON_DB_PORT" \
-		"$ISUCON_DB_NAME"
+# echo "set global slow_query_log_file = '/var/log/mysql/mysql-slow.log'; set global long_query_time = 0; set global slow_query_log = ON;" | mysql -u"$ISUCON_DB_USER" \
+# 		-p"$ISUCON_DB_PASSWORD" \
+# 		--host "$ISUCON_DB_HOST" \
+# 		--port "$ISUCON_DB_PORT" \
+# 		"$ISUCON_DB_NAME"
 fi
