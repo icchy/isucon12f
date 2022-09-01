@@ -15,8 +15,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/bwmarrin/snowflake"
-	_ "github.com/go-sql-driver/mysql"
+	"github.com/go-sql-driver/mysql"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 	"github.com/labstack/echo-contrib/session"
@@ -100,15 +99,32 @@ func (j *JSONSerializer) Deserialize(c echo.Context, i interface{}) error {
 	return err
 }
 
+// ID生成のためのキャッシュ
+// Initializeでかならずクリアする必要がある
+var (
+	IdGenerateCache struct {
+		mtx     sync.Mutex
+		current int64
+		last    int64
+	}
+)
+
+func clearIdGenerateCache() {
+	IdGenerateCache.mtx.Lock()
+	defer IdGenerateCache.mtx.Unlock()
+	IdGenerateCache.current = 0
+	IdGenerateCache.last = 0
+}
+
 type Handler struct {
-	DB     []*sqlx.DB
-	SFNode *snowflake.Node
-	TS     *TokenStore
-	MD     *MasterDataCache
-	UB     *UserBanCache
+	DB []*sqlx.DB
+	TS *TokenStore
+	MD *MasterDataCache
+	UB *UserBanCache
 }
 
 func main() {
+	clearIdGenerateCache()
 	rand.Seed(time.Now().UnixNano())
 	time.Local = time.FixedZone("Local", 9*60*60)
 
@@ -126,16 +142,11 @@ func main() {
 	// setting server
 	e.Server.Addr = fmt.Sprintf(":%v", "8080")
 
-	node, err := snowflake.NewNode(0)
-	if err != nil {
-		e.Logger.Fatalf("failed to generate snowflake node: %v", err)
-	}
 	h := &Handler{
-		DB:     make([]*sqlx.DB, 0),
-		SFNode: node,
-		TS:     NewTokenStore(),
-		MD:     NewMasterDataCache(),
-		UB:     NewUserBanCache(),
+		DB: make([]*sqlx.DB, 0),
+		TS: NewTokenStore(),
+		MD: NewMasterDataCache(),
+		UB: NewUserBanCache(),
 	}
 
 	// connect db
@@ -182,6 +193,7 @@ func main() {
 	e.Logger.Infof("Start server: address=%s", e.Server.Addr)
 
 	_ = os.Remove("/tmp/app.socket")
+	var err error
 	e.Listener, err = net.Listen("unix", "/tmp/app.socket")
 	if err != nil {
 		e.Logger.Fatalf("failed to create unix socket: %w", err)
@@ -802,6 +814,8 @@ func (h *Handler) initialize(c echo.Context) error {
 	if err := h.MD.Load(h); err != nil {
 		return err
 	}
+
+	clearIdGenerateCache()
 
 	return successResponse(c, &InitializeResponse{
 		Language: "go",
@@ -2161,7 +2175,35 @@ func noContentResponse(c echo.Context, status int) error {
 
 // generateID uniqueなIDを生成する
 func (h *Handler) generateID() (int64, error) {
-	return int64(h.SFNode.Generate()), nil
+	IdGenerateCache.mtx.Lock()
+	defer IdGenerateCache.mtx.Unlock()
+
+	if IdGenerateCache.current < IdGenerateCache.last {
+		IdGenerateCache.current += 1
+		return IdGenerateCache.current - 1, nil
+	}
+
+	var updateErr error
+	for i := 0; i < 100; i++ {
+		res, err := h.getAdminDB().Exec("UPDATE id_generator SET id=LAST_INSERT_ID(id+1000)")
+		if err != nil {
+			if merr, ok := err.(*mysql.MySQLError); ok && merr.Number == 1213 {
+				updateErr = err
+				continue
+			}
+			return 0, err
+		}
+
+		id, err := res.LastInsertId()
+		if err != nil {
+			return 0, err
+		}
+		IdGenerateCache.current = id + 1
+		IdGenerateCache.last = id + 1000
+		return id, nil
+	}
+
+	return 0, fmt.Errorf("failed to generate id: %w", updateErr)
 }
 
 // generateSessionID

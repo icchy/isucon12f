@@ -88,12 +88,7 @@ func connectDB(batch bool) (*sqlx.DB, error) {
 }
 
 func (h *Handler) getDB(userID int64) *sqlx.DB {
-	idx := 0
-	if userID > 10000000000 {
-		idx = (int(userID) >> 22) % len(h.DB)
-	} else {
-		idx = int(userID) % len(h.DB)
-	}
+	idx := int(userID) % len(h.DB)
 	return h.DB[idx]
 }
 
