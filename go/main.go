@@ -20,7 +20,6 @@ import (
 	"github.com/gofiber/fiber/v2/middleware/recover"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
-	"github.com/pkg/errors"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 )
@@ -145,10 +144,12 @@ func main() {
 
 	// e.Use(middleware.CORS())
 	app.Use(cors.New(cors.Config{}))
+	// app.Use(pprof.New())
 
 	// utility
 	app.Post("/initialize", h.initialize)
 	app.Get("/health", h.health)
+	// app.Get("/metrics", monitor.New(monitor.Config{Title: "Metrics"}))
 
 	// feature
 	API := app.Group("", h.apiMiddleware)
@@ -238,7 +239,7 @@ func (h *Handler) apiMiddleware(c *fiber.Ctx) error {
 
 // checkSessionMiddleware
 func (h *Handler) checkSessionMiddleware(c *fiber.Ctx) error {
-	values := make(map[string]interface{})
+	values := make(map[string]int64)
 
 	if err := h.XS.Get(c, "session", &values); err != nil {
 		return errorResponse(c, http.StatusUnauthorized, ErrUnauthorized)
@@ -254,7 +255,7 @@ func (h *Handler) checkSessionMiddleware(c *fiber.Ctx) error {
 		return errorResponse(c, http.StatusInternalServerError, ErrGetRequestTime)
 	}
 
-	sessUserID, ok := values["userID"].(int64)
+	sessUserID, ok := values["userID"]
 	if !ok {
 		return errorResponse(c, http.StatusUnauthorized, ErrUnauthorized)
 	}
@@ -263,7 +264,7 @@ func (h *Handler) checkSessionMiddleware(c *fiber.Ctx) error {
 		return errorResponse(c, http.StatusForbidden, ErrForbidden)
 	}
 
-	expiresAt, ok := values["expiresAt"].(int64)
+	expiresAt, ok := values["expiresAt"]
 	if !ok {
 		return errorResponse(c, http.StatusUnauthorized, ErrUnauthorized)
 	}
@@ -927,7 +928,7 @@ func (h *Handler) createUser(c *fiber.Ctx) error {
 	}
 
 	// generate session
-	values := make(map[string]interface{})
+	values := make(map[string]int64)
 	values["userID"] = user.ID
 	values["expiresAt"] = requestAt + 86400
 
@@ -1014,7 +1015,7 @@ func (h *Handler) login(c *fiber.Ctx) error {
 
 	// sessionを更新
 
-	values := make(map[string]interface{})
+	values := make(map[string]int64)
 	values["userID"] = req.UserID
 	values["expiresAt"] = requestAt + 86400
 
@@ -2116,7 +2117,7 @@ func (h *Handler) health(c *fiber.Ctx) error {
 
 // errorResponse returns error.
 func errorResponse(c *fiber.Ctx, statusCode int, err error) error {
-	log.Error().Int("status", statusCode).Err(errors.WithStack(err)).Msg("")
+	// log.Error().Int("status", statusCode).Err(err).Msgf("%+v", errors.WithStack(err))
 
 	return c.Status(statusCode).JSON(struct {
 		StatusCode int    `json:"status_code"`

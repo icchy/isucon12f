@@ -3,6 +3,7 @@ package main
 import (
 	"sync"
 
+	"github.com/goccy/go-json"
 	"github.com/gofiber/fiber/v2"
 	"github.com/gorilla/securecookie"
 )
@@ -12,13 +13,25 @@ type XSession struct {
 	mtx sync.Mutex
 }
 
+type JSONEncoder struct{}
+
+func (e JSONEncoder) Serialize(src interface{}) ([]byte, error) {
+	return json.Marshal(src)
+}
+
+func (e JSONEncoder) Deserialize(src []byte, dst interface{}) error {
+	return json.Unmarshal(src, dst)
+}
+
 func NewXSession(hashKey, blockKey []byte) *XSession {
+	s := securecookie.New(hashKey, blockKey)
+	s.SetSerializer(JSONEncoder{})
 	return &XSession{
-		s: securecookie.New(hashKey, blockKey),
+		s: s,
 	}
 }
 
-func (sess *XSession) encode(name string, data map[string]interface{}) (string, error) {
+func (sess *XSession) encode(name string, data map[string]int64) (string, error) {
 	encoded, err := sess.s.Encode(name, data)
 	if err != nil {
 		return "", err
@@ -26,7 +39,7 @@ func (sess *XSession) encode(name string, data map[string]interface{}) (string, 
 	return encoded, nil
 }
 
-func (sess *XSession) decode(name, encoded string, dest *map[string]interface{}) error {
+func (sess *XSession) decode(name, encoded string, dest *map[string]int64) error {
 	if err := sess.s.Decode(name, encoded, &dest); err != nil {
 		return err
 	}
@@ -34,7 +47,7 @@ func (sess *XSession) decode(name, encoded string, dest *map[string]interface{})
 	return nil
 }
 
-func (sess *XSession) Get(c *fiber.Ctx, name string, dest *map[string]interface{}) error {
+func (sess *XSession) Get(c *fiber.Ctx, name string, dest *map[string]int64) error {
 	encoded := c.Get("x-session")
 	if err := sess.decode(name, encoded, dest); err != nil {
 		return err
@@ -42,6 +55,6 @@ func (sess *XSession) Get(c *fiber.Ctx, name string, dest *map[string]interface{
 	return nil
 }
 
-func (sess *XSession) Save(name string, data map[string]interface{}) (string, error) {
+func (sess *XSession) Save(name string, data map[string]int64) (string, error) {
 	return sess.encode(name, data)
 }
