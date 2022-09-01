@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/go-sql-driver/mysql"
+	"github.com/goccy/go-json"
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
 	"github.com/gofiber/fiber/v2/middleware/recover"
@@ -113,7 +114,10 @@ func main() {
 	rand.Seed(time.Now().UnixNano())
 	time.Local = time.FixedZone("Local", 9*60*60)
 
-	app := fiber.New()
+	app := fiber.New(fiber.Config{
+		JSONEncoder: json.Marshal,
+		JSONDecoder: json.Unmarshal,
+	})
 	app.Use(recover.New())
 	app.Use(cors.New(cors.Config{
 		AllowOrigins: "*",
@@ -121,11 +125,7 @@ func main() {
 		AllowHeaders: "Content-Type, x-master-version, x-session",
 	}))
 
-	// e.JSONSerializer = &JSONSerializer{}
-	// e.Use(middleware.Logger())
-
 	// setting server
-
 	h := &Handler{
 		DB: make([]*sqlx.DB, 0),
 		TS: NewTokenStore(),
