@@ -6,7 +6,7 @@ import (
 	"sync"
 )
 
-type MasterData struct {
+type MasterDataCache struct {
 	mtxVersionMasters          sync.RWMutex
 	mtxItemMasters             sync.RWMutex
 	mtxGachaMasters            sync.RWMutex
@@ -24,8 +24,8 @@ type MasterData struct {
 	LoginBonusRewardMasters []*LoginBonusRewardMaster
 }
 
-func NewMasterData() *MasterData {
-	return &MasterData{
+func NewMasterDataCache() *MasterDataCache {
+	return &MasterDataCache{
 		VersionMasters:          make([]*VersionMaster, 0),
 		ItemMasters:             make([]*ItemMaster, 0),
 		GachaMasters:            make([]*GachaMaster, 0),
@@ -36,7 +36,7 @@ func NewMasterData() *MasterData {
 	}
 }
 
-func (m *MasterData) Load(h *Handler) error {
+func (m *MasterDataCache) Load(h *Handler) error {
 	db := h.getAdminDB()
 
 	m.mtxVersionMasters.Lock()
@@ -84,7 +84,7 @@ func (m *MasterData) Load(h *Handler) error {
 	return nil
 }
 
-func (m *MasterData) getVersionMaster() (*VersionMaster, error) {
+func (m *MasterDataCache) getVersionMaster() (*VersionMaster, error) {
 	m.mtxVersionMasters.RLock()
 	defer m.mtxVersionMasters.RUnlock()
 
@@ -97,14 +97,14 @@ func (m *MasterData) getVersionMaster() (*VersionMaster, error) {
 	return nil, fmt.Errorf("active master version is not found")
 }
 
-func (m *MasterData) getItemMasters() ([]*ItemMaster, error) {
+func (m *MasterDataCache) getItemMasters() ([]*ItemMaster, error) {
 	m.mtxItemMasters.RLock()
 	defer m.mtxItemMasters.RUnlock()
 
 	return m.ItemMasters, nil
 }
 
-func (m *MasterData) getItemMasterById(id int64) (*ItemMaster, error) {
+func (m *MasterDataCache) getItemMasterById(id int64) (*ItemMaster, error) {
 	m.mtxItemMasters.RLock()
 	defer m.mtxItemMasters.RUnlock()
 
@@ -117,7 +117,7 @@ func (m *MasterData) getItemMasterById(id int64) (*ItemMaster, error) {
 	return nil, ErrItemNotFound
 }
 
-func (m *MasterData) getItemMasterByIdAndItemType(id, itemType int64) (*ItemMaster, error) {
+func (m *MasterDataCache) getItemMasterByIdAndItemType(id, itemType int64) (*ItemMaster, error) {
 	m.mtxItemMasters.RLock()
 	defer m.mtxItemMasters.RUnlock()
 
@@ -130,7 +130,7 @@ func (m *MasterData) getItemMasterByIdAndItemType(id, itemType int64) (*ItemMast
 	return nil, ErrItemNotFound
 }
 
-func (m *MasterData) getGachaMasters(requestAt int64) ([]*GachaMaster, error) {
+func (m *MasterDataCache) getGachaMasters(requestAt int64) ([]*GachaMaster, error) {
 	m.mtxGachaMasters.RLock()
 	defer m.mtxGachaMasters.RUnlock()
 
@@ -149,7 +149,7 @@ func (m *MasterData) getGachaMasters(requestAt int64) ([]*GachaMaster, error) {
 	return gachaMasters, nil
 }
 
-func (m *MasterData) getGachaMasterById(requestAt, id int64) (*GachaMaster, error) {
+func (m *MasterDataCache) getGachaMasterById(requestAt, id int64) (*GachaMaster, error) {
 	m.mtxGachaMasters.RLock()
 	defer m.mtxGachaMasters.RUnlock()
 
@@ -162,7 +162,7 @@ func (m *MasterData) getGachaMasterById(requestAt, id int64) (*GachaMaster, erro
 	return nil, fmt.Errorf("not found gacha")
 }
 
-func (m *MasterData) getGachaItemMastersById(id int64) ([]*GachaItemMaster, error) {
+func (m *MasterDataCache) getGachaItemMastersById(id int64) ([]*GachaItemMaster, error) {
 	m.mtxGachaItemMasters.RLock()
 	defer m.mtxGachaItemMasters.RUnlock()
 
@@ -181,7 +181,7 @@ func (m *MasterData) getGachaItemMastersById(id int64) ([]*GachaItemMaster, erro
 	return gachaItemMasters, nil
 }
 
-func (m *MasterData) getGachaItemMastersWeightById(id int64) (int64, error) {
+func (m *MasterDataCache) getGachaItemMastersWeightById(id int64) (int64, error) {
 	m.mtxGachaItemMasters.RLock()
 	defer m.mtxGachaItemMasters.RUnlock()
 
@@ -196,7 +196,7 @@ func (m *MasterData) getGachaItemMastersWeightById(id int64) (int64, error) {
 	return sum, nil
 }
 
-func (m *MasterData) getPresentAllMasters(requestAt int64) ([]*PresentAllMaster, error) {
+func (m *MasterDataCache) getPresentAllMasters(requestAt int64) ([]*PresentAllMaster, error) {
 	m.mtxPresentAllMasters.RLock()
 	defer m.mtxPresentAllMasters.RUnlock()
 
@@ -211,7 +211,7 @@ func (m *MasterData) getPresentAllMasters(requestAt int64) ([]*PresentAllMaster,
 	return presentAllMasters, nil
 }
 
-func (m *MasterData) getLoginBonusMasters(requestAt int64) ([]*LoginBonusMaster, error) {
+func (m *MasterDataCache) getLoginBonusMasters(requestAt int64) ([]*LoginBonusMaster, error) {
 	m.mtxLoginBonusMasters.RLock()
 	defer m.mtxLoginBonusMasters.RUnlock()
 
@@ -226,7 +226,7 @@ func (m *MasterData) getLoginBonusMasters(requestAt int64) ([]*LoginBonusMaster,
 	return loginBonudMasters, nil
 }
 
-func (m *MasterData) getLoginBonusRewardMasterByIdAndSeq(id int64, seq int) (*LoginBonusRewardMaster, error) {
+func (m *MasterDataCache) getLoginBonusRewardMasterByIdAndSeq(id int64, seq int) (*LoginBonusRewardMaster, error) {
 	m.mtxLoginBonusRewardMasters.RLock()
 	defer m.mtxLoginBonusRewardMasters.RUnlock()
 

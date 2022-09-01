@@ -104,7 +104,7 @@ type Handler struct {
 	DB     []*sqlx.DB
 	SFNode *snowflake.Node
 	TS     *TokenStore
-	MD     *MasterData
+	MD     *MasterDataCache
 	UB     *UserBanCache
 }
 
@@ -134,7 +134,7 @@ func main() {
 		DB:     make([]*sqlx.DB, 0),
 		SFNode: node,
 		TS:     NewTokenStore(),
-		MD:     NewMasterData(),
+		MD:     NewMasterDataCache(),
 		UB:     NewUserBanCache(),
 	}
 
