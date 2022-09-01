@@ -65,7 +65,8 @@ CREATE TABLE `user_devices` (
   `deleted_at` bigint default NULL,
   PRIMARY KEY(`id`),
   UNIQUE uniq_user_id ( `user_id`, `platform_type`, `deleted_at`),
-  UNIQUE uniq_platform_id (`platform_id`, `platform_type`, `deleted_at`)
+  UNIQUE uniq_platform_id (`platform_id`, `platform_type`, `deleted_at`),
+  INDEX idx_user_platform (`user_id`, `platform_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
 
 
