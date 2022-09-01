@@ -535,7 +535,7 @@ func (h *Handler) adminUser(c *fiber.Ctx) error {
 
 	query := "SELECT * FROM users WHERE id=?"
 	user := new(User)
-	if err = h.getAdminDB().Get(user, query, userID); err != nil {
+	if err = h.getDB(userID).Get(user, query, userID); err != nil {
 		if err == sql.ErrNoRows {
 			return errorResponse(c, http.StatusNotFound, ErrUserNotFound)
 		}
@@ -544,50 +544,50 @@ func (h *Handler) adminUser(c *fiber.Ctx) error {
 
 	query = "SELECT * FROM user_devices WHERE user_id=?"
 	devices := make([]*UserDevice, 0)
-	if err = h.getAdminDB().Select(&devices, query, userID); err != nil {
+	if err = h.getDB(userID).Select(&devices, query, userID); err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
 
 	query = "SELECT * FROM user_cards WHERE user_id=?"
 	cards := make([]*UserCard, 0)
-	if err = h.getAdminDB().Select(&cards, query, userID); err != nil {
+	if err = h.getDB(userID).Select(&cards, query, userID); err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
 
 	query = "SELECT * FROM user_decks WHERE user_id=?"
 	decks := make([]*UserDeck, 0)
-	if err = h.getAdminDB().Select(&decks, query, userID); err != nil {
+	if err = h.getDB(userID).Select(&decks, query, userID); err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
 
 	query = "SELECT * FROM user_items WHERE user_id=?"
 	items := make([]*UserItem, 0)
-	if err = h.getAdminDB().Select(&items, query, userID); err != nil {
+	if err = h.getDB(userID).Select(&items, query, userID); err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
 
 	query = "SELECT * FROM user_login_bonuses WHERE user_id=?"
 	loginBonuses := make([]*UserLoginBonus, 0)
-	if err = h.getAdminDB().Select(&loginBonuses, query, userID); err != nil {
+	if err = h.getDB(userID).Select(&loginBonuses, query, userID); err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
 
 	query = "SELECT * FROM user_presents WHERE user_id=?"
 	presents := make([]*UserPresent, 0)
-	if err = h.getAdminDB().Select(&presents, query, userID); err != nil {
+	if err = h.getDB(userID).Select(&presents, query, userID); err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
 
 	query = "SELECT * FROM user_presents_deleted WHERE user_id=?"
 	presents_deleted := make([]*UserPresent, 0)
-	if err = h.getAdminDB().Select(&presents_deleted, query, userID); err != nil {
+	if err = h.getDB(userID).Select(&presents_deleted, query, userID); err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
 	presents = append(presents, presents_deleted...)
 
 	query = "SELECT * FROM user_present_all_received_history WHERE user_id=?"
 	presentHistory := make([]*UserPresentAllReceivedHistory, 0)
-	if err = h.getAdminDB().Select(&presentHistory, query, userID); err != nil {
+	if err = h.getDB(userID).Select(&presentHistory, query, userID); err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
 
@@ -630,7 +630,7 @@ func (h *Handler) adminBanUser(c *fiber.Ctx) error {
 
 	query := "SELECT * FROM users WHERE id=?"
 	user := new(User)
-	if err = h.getAdminDB().Get(user, query, userID); err != nil {
+	if err = h.getDB(userID).Get(user, query, userID); err != nil {
 		if err == sql.ErrNoRows {
 			return errorResponse(c, http.StatusBadRequest, ErrUserNotFound)
 		}
