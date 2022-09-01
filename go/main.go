@@ -416,7 +416,7 @@ func (h *Handler) obtainLoginBonus(tx *sqlx.Tx, userID int64, requestAt int64) (
 
 	sendLoginBonuses := make([]*UserLoginBonus, 0)
 
-	userBonuses := []*UserLoginBonus{}
+	userBonuses := make([]*UserLoginBonus, 0)
 	if err := tx.Select(&userBonuses, "SELECT * FROM user_login_bonuses WHERE user_id = ?", userID); err != nil {
 		return nil, err
 	}
@@ -426,13 +426,13 @@ func (h *Handler) obtainLoginBonus(tx *sqlx.Tx, userID int64, requestAt int64) (
 	if err != nil {
 		return nil, err
 	}
-	obtainCards := []*UserCard{}
+	obtainCards := make([]*UserCard, 0, len(loginBonuses))
 
-	userItems := []*UserItem{}
+	userItems := make([]*UserItem, 0)
 	if err := tx.Select(&userItems, "SELECT * FROM user_items WHERE user_id = ?", userID); err != nil {
 		return nil, err
 	}
-	obtainMaterials := []*UserItem{}
+	obtainMaterials := make([]*UserItem, 0, len(loginBonuses))
 
 	for _, bonus := range loginBonuses {
 		// ボーナスの進捗取得
@@ -586,7 +586,7 @@ func (h *Handler) obtainLoginBonus(tx *sqlx.Tx, userID int64, requestAt int64) (
 			}
 		}
 
-		updatedMaterials := []*UserItem{}
+		updatedMaterials := make([]*UserItem, 0, len(mergedMaterials))
 		for _, mm := range mergedMaterials {
 			updatedMaterials = append(updatedMaterials, mm)
 		}
@@ -618,14 +618,14 @@ func (h *Handler) obtainPresent(tx *sqlx.Tx, userID int64, requestAt int64) ([]*
 	// 全員プレゼント取得情報更新
 	obtainPresents := make([]*UserPresent, 0)
 
-	received_histories := []*UserPresentAllReceivedHistory{}
+	received_histories := make([]*UserPresentAllReceivedHistory, 0)
 	query := "SELECT * FROM user_present_all_received_history WHERE user_id = ?"
 	if err := tx.Select(&received_histories, query, userID); err != nil {
 		return nil, err
 	}
 
-	ups := []*UserPresent{}
-	histories := []*UserPresentAllReceivedHistory{}
+	ups := make([]*UserPresent, 0, len(normalPresents))
+	histories := make([]*UserPresentAllReceivedHistory, 0, len(normalPresents))
 
 	for _, np := range normalPresents {
 		hit := false
@@ -1344,7 +1344,7 @@ func (h *Handler) listPresent(c echo.Context) error {
 	}
 
 	offset := PresentCountPerPage * (n - 1)
-	presentList := []*UserPresent{}
+	presentList := make([]*UserPresent, 0)
 	query := `
 	SELECT * FROM user_presents 
 	WHERE user_id = ?
@@ -1412,7 +1412,7 @@ func (h *Handler) receivePresent(c echo.Context) error {
 	if err != nil {
 		return errorResponse(c, http.StatusBadRequest, err)
 	}
-	obtainPresent := []*UserPresent{}
+	obtainPresent := make([]*UserPresent, 0)
 	if err = h.getDB(userID).Select(&obtainPresent, query, params...); err != nil {
 		return errorResponse(c, http.StatusBadRequest, err)
 	}
@@ -1430,7 +1430,7 @@ func (h *Handler) receivePresent(c echo.Context) error {
 	defer tx.Rollback() //nolint:errcheck
 
 	// 配布処理
-	ids := []int64{}
+	ids := make([]int64, 0, len(obtainPresent))
 	for _, v := range obtainPresent {
 		if v.DeletedAt != nil {
 			return errorResponse(c, http.StatusInternalServerError, fmt.Errorf("received present"))
@@ -1456,13 +1456,13 @@ func (h *Handler) receivePresent(c echo.Context) error {
 	if err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
-	obtainCards := []*UserCard{}
+	obtainCards := make([]*UserCard, 0, len(obtainPresent))
 
-	userItems := []*UserItem{}
+	userItems := make([]*UserItem, 0)
 	if err := tx.Select(&userItems, "SELECT * FROM user_items WHERE user_id = ?", userID); err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
-	obtainMaterials := []*UserItem{}
+	obtainMaterials := make([]*UserItem, 0, len(obtainPresent))
 
 	for _, v := range obtainPresent {
 		switch v.ItemType {
@@ -1569,7 +1569,7 @@ func (h *Handler) receivePresent(c echo.Context) error {
 			}
 		}
 
-		updatedMaterials := []*UserItem{}
+		updatedMaterials := make([]*UserItem, 0, len(mergedMaterials))
 		for _, mm := range mergedMaterials {
 			updatedMaterials = append(updatedMaterials, mm)
 		}
@@ -1622,7 +1622,7 @@ func (h *Handler) listItem(c echo.Context) error {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
 
-	itemList := []*UserItem{}
+	itemList := make([]*UserItem, 0)
 	query = "SELECT * FROM user_items WHERE user_id = ?"
 	if err = h.getDB(userID).Select(&itemList, query, userID); err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
@@ -1735,12 +1735,12 @@ func (h *Handler) addExpToCard(c echo.Context) error {
 
 	// 消費アイテムの所持チェック
 	items := make([]*ConsumeUserItemData, 0)
-	ids := []int64{}
+	ids := make([]int64, 0, len(req.Items))
 	for _, v := range req.Items {
 		ids = append(ids, v.ID)
 	}
 
-	userItems := []*UserItem{}
+	userItems := make([]*UserItem, 0)
 	query, args, err := sqlx.In("SELECT * FROM user_items WHERE user_id = ? AND item_type = 3 AND id IN (?)", userID, ids)
 	if err != nil {
 		return err
