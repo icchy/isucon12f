@@ -8,7 +8,7 @@ APP_HOST=i1
 scp webapp ${APP_HOST}:/tmp/webapp
 rsync -vr sql/* $APP_HOST:webapp/sql/
 
-DB_HOSTS="i2 i3 i4 i5"
+DB_HOSTS="i1 i2 i3 i4 i5"
 for h in $DB_HOSTS
 do
   rsync -vr sql/* $h:webapp/sql/ &

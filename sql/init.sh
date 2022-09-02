@@ -14,7 +14,8 @@ if [ `hostname` == "a01-28" ]; then
   ssh i4 "bash -c '~/webapp/sql/init.sh'" &
   ssh i5 "bash -c '~/webapp/sql/init.sh'" &
   wait
-else
+fi
+
 echo "set global slow_query_log = OFF;" | mysql -u"$ISUCON_DB_USER" \
 		-p"$ISUCON_DB_PASSWORD" \
 		--host "$ISUCON_DB_HOST" \
@@ -33,6 +34,7 @@ mysql -u"$ISUCON_DB_USER" \
 		--port "$ISUCON_DB_PORT" \
 		"$ISUCON_DB_NAME" < 4_alldata_exclude_user_presents.sql
 
+if [ `hostname` != "a01-28" ]; then
 echo "delete from user_presents where id > 100000000000" | mysql -u"$ISUCON_DB_USER" \
 		-p"$ISUCON_DB_PASSWORD" \
 		--host "$ISUCON_DB_HOST" \
@@ -55,22 +57,38 @@ echo "LOAD DATA INFILE '${SECURE_DIR}5_user_presents_not_receive_data.tsv' REPLA
         --host "$ISUCON_DB_HOST" \
         --port "$ISUCON_DB_PORT" \
         "$ISUCON_DB_NAME" 
+fi
+
+if [ `hostname` == "a01-28" ]; then
+mysql -u"$ISUCON_DB_USER" \
+		-p"$ISUCON_DB_PASSWORD" \
+		--host "$ISUCON_DB_HOST" \
+		--port "$ISUCON_DB_PORT" \
+		"$ISUCON_DB_NAME" < setup/4_drop_for_admin.sql
 
 mysql -u"$ISUCON_DB_USER" \
 		-p"$ISUCON_DB_PASSWORD" \
 		--host "$ISUCON_DB_HOST" \
 		--port "$ISUCON_DB_PORT" \
 		"$ISUCON_DB_NAME" < 6_id_generator_init.sql
+else
+mysql -u"$ISUCON_DB_USER" \
+		-p"$ISUCON_DB_PASSWORD" \
+		--host "$ISUCON_DB_HOST" \
+		--port "$ISUCON_DB_PORT" \
+		"$ISUCON_DB_NAME" < setup/5_drop_for_user.sql
 
 mysql -u"$ISUCON_DB_USER" \
 		-p"$ISUCON_DB_PASSWORD" \
 		--host "$ISUCON_DB_HOST" \
 		--port "$ISUCON_DB_PORT" \
-		"$ISUCON_DB_NAME" < 9_drop_unused_records.sql
-
-# echo "set global slow_query_log_file = '/var/log/mysql/mysql-slow.log'; set global long_query_time = 0; set global slow_query_log = ON;" | mysql -u"$ISUCON_DB_USER" \
-# 		-p"$ISUCON_DB_PASSWORD" \
-# 		--host "$ISUCON_DB_HOST" \
-# 		--port "$ISUCON_DB_PORT" \
-# 		"$ISUCON_DB_NAME"
+		"$ISUCON_DB_NAME" < setup/6_delete_unused_user_records.sql
 fi
+
+
+
+echo "set global slow_query_log_file = '/var/log/mysql/mysql-slow.log'; set global long_query_time = 0; set global slow_query_log = ON;" | mysql -u"$ISUCON_DB_USER" \
+		-p"$ISUCON_DB_PASSWORD" \
+		--host "$ISUCON_DB_HOST" \
+		--port "$ISUCON_DB_PORT" \
+		"$ISUCON_DB_NAME"

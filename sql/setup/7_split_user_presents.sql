@@ -1,3 +1,5 @@
+USE `isucon`;
+
 DROP TABLE IF EXISTS user_presents_deleted;
 
 CREATE TABLE user_presents_deleted (

@@ -88,8 +88,8 @@ func connectDB(batch bool) (*sqlx.DB, error) {
 }
 
 func (h *Handler) getDB(userID int64) *sqlx.DB {
-	idx := int(userID) % len(h.DB)
-	return h.DB[idx]
+	idx := int(userID) % (len(h.DB) - 1)
+	return h.DB[idx+1]
 }
 
 func (h *Handler) getAdminDB() *sqlx.DB {
