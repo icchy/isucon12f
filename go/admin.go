@@ -96,7 +96,7 @@ func (h *Handler) adminLogin(c *fiber.Ctx) error {
 	}
 
 	// create session
-	sID, err := h.generateID()
+	sID, err := h.GenericIDCache.generateID(h)
 	if err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
@@ -637,7 +637,7 @@ func (h *Handler) adminBanUser(c *fiber.Ctx) error {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
 
-	banID, err := h.generateID()
+	banID, err := h.GenericIDCache.generateID(h)
 	if err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}

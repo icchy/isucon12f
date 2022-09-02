@@ -31,16 +31,16 @@ func NewXSession(hashKey, blockKey []byte) *XSession {
 	}
 }
 
-func (sess *XSession) encode(name string, data map[string]int64) (string, error) {
-	encoded, err := sess.s.Encode(name, data)
+func (sess *XSession) encode(name string, data *map[string]int64) (string, error) {
+	encoded, err := sess.s.Encode(name, *data)
 	if err != nil {
 		return "", err
 	}
 	return encoded, nil
 }
 
-func (sess *XSession) decode(name, encoded string, dest *map[string]int64) error {
-	if err := sess.s.Decode(name, encoded, &dest); err != nil {
+func (sess *XSession) decode(name string, encoded *string, dest *map[string]int64) error {
+	if err := sess.s.Decode(name, *encoded, &dest); err != nil {
 		return err
 	}
 
@@ -49,12 +49,12 @@ func (sess *XSession) decode(name, encoded string, dest *map[string]int64) error
 
 func (sess *XSession) Get(c *fiber.Ctx, name string, dest *map[string]int64) error {
 	encoded := c.Get("x-session")
-	if err := sess.decode(name, encoded, dest); err != nil {
+	if err := sess.decode(name, &encoded, dest); err != nil {
 		return err
 	}
 	return nil
 }
 
-func (sess *XSession) Save(name string, data map[string]int64) (string, error) {
+func (sess *XSession) Save(name string, data *map[string]int64) (string, error) {
 	return sess.encode(name, data)
 }

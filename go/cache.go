@@ -3,7 +3,10 @@ package main
 import (
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
+
+	"github.com/go-sql-driver/mysql"
 )
 
 type MasterDataCache struct {
@@ -352,4 +355,57 @@ func (u *UserDeviceCache) addUserDevice(user_id int64, viewerID string) bool {
 	}{user_id, viewerID}] = true
 
 	return true
+}
+
+type IdGenerateCache struct {
+	tableName string
+	mtx       sync.Mutex
+	current   int64
+	last      int64
+}
+
+func NewIdGenerateCache(tableName string) *IdGenerateCache {
+	return &IdGenerateCache{
+		tableName: tableName,
+	}
+}
+
+func (i *IdGenerateCache) clearIdGenerateCache() {
+	i.mtx.Lock()
+	defer i.mtx.Unlock()
+	i.current = 0
+	i.last = 0
+}
+
+func (cache *IdGenerateCache) generateID(h *Handler) (int64, error) {
+	cache.mtx.Lock()
+	defer cache.mtx.Unlock()
+
+	if cache.current < cache.last {
+		cache.current += 1
+		return cache.current - 1, nil
+	}
+
+	var updateErr error
+	for i := 0; i < 100; i++ {
+		res, err := h.getAdminDB().Exec(strings.Join([]string{"UPDATE", cache.tableName, "SET id=LAST_INSERT_ID(id+1000)"}, " "))
+		if err != nil {
+			if merr, ok := err.(*mysql.MySQLError); ok && merr.Number == 1213 {
+				updateErr = err
+				continue
+			}
+			return 0, err
+		}
+
+		id, err := res.LastInsertId()
+		if err != nil {
+			return 0, err
+		}
+		cache.current = id + 1
+		cache.last = id + 1000
+		return id, nil
+	}
+
+	return 0, fmt.Errorf("failed to generate id: %w", updateErr)
+
 }

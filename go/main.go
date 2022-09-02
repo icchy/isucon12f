@@ -13,7 +13,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/go-sql-driver/mysql"
 	"github.com/goccy/go-json"
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
@@ -82,30 +81,15 @@ func (t *TokenStore) Del(token string, tokenType int) {
 	t.mtx.Unlock()
 }
 
-// ID生成のためのキャッシュ
-// Initializeでかならずクリアする必要がある
-var (
-	IdGenerateCache struct {
-		mtx     sync.Mutex
-		current int64
-		last    int64
-	}
-)
-
-func clearIdGenerateCache() {
-	IdGenerateCache.mtx.Lock()
-	defer IdGenerateCache.mtx.Unlock()
-	IdGenerateCache.current = 0
-	IdGenerateCache.last = 0
-}
-
 type Handler struct {
-	DB []*sqlx.DB
-	TS *TokenStore
-	MD *MasterDataCache
-	UB *UserBanCache
-	UD *UserDeviceCache
-	XS *XSession
+	DB             []*sqlx.DB
+	TS             *TokenStore
+	MD             *MasterDataCache
+	UB             *UserBanCache
+	UD             *UserDeviceCache
+	XS             *XSession
+	UserIDCache    *IdGenerateCache
+	GenericIDCache *IdGenerateCache
 }
 
 func main() {
@@ -127,12 +111,14 @@ func main() {
 
 	// setting server
 	h := &Handler{
-		DB: make([]*sqlx.DB, 0),
-		TS: NewTokenStore(),
-		MD: NewMasterDataCache(),
-		UB: NewUserBanCache(),
-		UD: NewUserDeviceCache(),
-		XS: NewXSession([]byte("d589788be168c655979c926723310d1b"), []byte("44eb50f2266a78563209058b39aaf289")),
+		DB:             make([]*sqlx.DB, 0),
+		TS:             NewTokenStore(),
+		MD:             NewMasterDataCache(),
+		UB:             NewUserBanCache(),
+		UD:             NewUserDeviceCache(),
+		XS:             NewXSession([]byte("d589788be168c655979c926723310d1b"), []byte("44eb50f2266a78563209058b39aaf289")),
+		UserIDCache:    NewIdGenerateCache("uid_generator"),
+		GenericIDCache: NewIdGenerateCache("id_generator"),
 	}
 
 	// connect db
@@ -148,7 +134,8 @@ func main() {
 		log.Fatal().Err(err).Msg("failed to load user_device")
 	}
 
-	clearIdGenerateCache()
+	h.UserIDCache.clearIdGenerateCache()
+	h.GenericIDCache.clearIdGenerateCache()
 
 	// e.Use(middleware.CORS())
 	app.Use(cors.New(cors.Config{}))
@@ -424,7 +411,7 @@ func (h *Handler) obtainLoginBonus(tx *sqlx.Tx, userID int64, requestAt int64) (
 			}
 		}
 		if userBonus == nil {
-			ubID, err := h.generateID()
+			ubID, err := h.GenericIDCache.generateID(h)
 			if err != nil {
 				return nil, err
 			}
@@ -476,7 +463,7 @@ func (h *Handler) obtainLoginBonus(tx *sqlx.Tx, userID int64, requestAt int64) (
 				return nil, ErrItemNotFound
 			}
 
-			cID, err := h.generateID()
+			cID, err := h.GenericIDCache.generateID(h)
 			if err != nil {
 				return nil, err
 			}
@@ -515,7 +502,7 @@ func (h *Handler) obtainLoginBonus(tx *sqlx.Tx, userID int64, requestAt int64) (
 			}
 
 			if uitem == nil { // new
-				uitemID, err := h.generateID()
+				uitemID, err := h.GenericIDCache.generateID(h)
 				if err != nil {
 					return nil, err
 				}
@@ -548,8 +535,7 @@ func (h *Handler) obtainLoginBonus(tx *sqlx.Tx, userID int64, requestAt int64) (
 	}
 
 	if len(obtainCards) > 0 {
-		if _, err := tx.NamedExec("INSERT INTO user_cards(id, user_id, card_id, amount_per_sec, level, total_exp, created_at, updated_at) "+
-			"VALUES (:id, :user_id, :card_id, :amount_per_sec, :level, :total_exp, :created_at, :updated_at)", obtainCards); err != nil {
+		if _, err := tx.NamedExec("INSERT INTO user_cards(id, user_id, card_id, amount_per_sec, level, total_exp, created_at, updated_at) VALUES (:id, :user_id, :card_id, :amount_per_sec, :level, :total_exp, :created_at, :updated_at)", obtainCards); err != nil {
 			return nil, err
 		}
 	}
@@ -571,17 +557,13 @@ func (h *Handler) obtainLoginBonus(tx *sqlx.Tx, userID int64, requestAt int64) (
 			updatedMaterials = append(updatedMaterials, mm)
 		}
 
-		if _, err := tx.NamedExec("INSERT INTO user_items(id, user_id, item_id, item_type, amount, created_at, updated_at) "+
-			"VALUES (:id, :user_id, :item_id, :item_type, :amount, :created_at, :updated_at) "+
-			"ON DUPLICATE KEY UPDATE `amount` = VALUES(`amount`), `updated_at` = VALUES(`updated_at`)", updatedMaterials); err != nil {
+		if _, err := tx.NamedExec("INSERT INTO user_items(id, user_id, item_id, item_type, amount, created_at, updated_at) VALUES (:id, :user_id, :item_id, :item_type, :amount, :created_at, :updated_at) ON DUPLICATE KEY UPDATE `amount` = VALUES(`amount`), `updated_at` = VALUES(`updated_at`)", updatedMaterials); err != nil {
 			return nil, err
 		}
 	}
 
 	// 進捗の保存
-	if _, err := tx.NamedExec("INSERT INTO user_login_bonuses(id, user_id, login_bonus_id, last_reward_sequence, loop_count, created_at, updated_at) "+
-		"VALUES (:id, :user_id, :login_bonus_id, :last_reward_sequence, :loop_count, :created_at, :updated_at) "+
-		"ON DUPLICATE KEY UPDATE `last_reward_sequence` = VALUES(`last_reward_sequence`), `loop_count` = VALUES(`loop_count`), `updated_at` = VALUES(`updated_at`)", sendLoginBonuses); err != nil {
+	if _, err := tx.NamedExec("INSERT INTO user_login_bonuses(id, user_id, login_bonus_id, last_reward_sequence, loop_count, created_at, updated_at) VALUES (:id, :user_id, :login_bonus_id, :last_reward_sequence, :loop_count, :created_at, :updated_at) ON DUPLICATE KEY UPDATE `last_reward_sequence` = VALUES(`last_reward_sequence`), `loop_count` = VALUES(`loop_count`), `updated_at` = VALUES(`updated_at`)", sendLoginBonuses); err != nil {
 		return nil, err
 	}
 
@@ -621,7 +603,7 @@ func (h *Handler) obtainPresent(tx *sqlx.Tx, userID int64, requestAt int64) ([]*
 		}
 
 		// user present boxに入れる
-		pID, err := h.generateID()
+		pID, err := h.GenericIDCache.generateID(h)
 		if err != nil {
 			return nil, err
 		}
@@ -640,7 +622,7 @@ func (h *Handler) obtainPresent(tx *sqlx.Tx, userID int64, requestAt int64) ([]*
 		ups = append(ups, up)
 
 		// historyに入れる
-		phID, err := h.generateID()
+		phID, err := h.GenericIDCache.generateID(h)
 		if err != nil {
 			return nil, err
 		}
@@ -705,7 +687,7 @@ func (h *Handler) obtainItem(tx *sqlx.Tx, userID, itemID int64, itemType int, ob
 			return nil, nil, nil, ErrItemNotFound
 		}
 
-		cID, err := h.generateID()
+		cID, err := h.GenericIDCache.generateID(h)
 		if err != nil {
 			return nil, nil, nil, err
 		}
@@ -742,7 +724,7 @@ func (h *Handler) obtainItem(tx *sqlx.Tx, userID, itemID int64, itemType int, ob
 		}
 
 		if uitem == nil { // 新規作成
-			uitemID, err := h.generateID()
+			uitemID, err := h.GenericIDCache.generateID(h)
 			if err != nil {
 				return nil, nil, nil, err
 			}
@@ -799,7 +781,8 @@ func (h *Handler) initialize(c *fiber.Ctx) error {
 		log.Fatal().Err(err).Msg("failed to load user_device")
 	}
 
-	clearIdGenerateCache()
+	h.GenericIDCache.clearIdGenerateCache()
+	h.UserIDCache.clearIdGenerateCache()
 
 	return successResponse(c, &InitializeResponse{
 		Language: "go",
@@ -829,7 +812,7 @@ func (h *Handler) createUser(c *fiber.Ctx) error {
 	}
 
 	// ユーザ作成
-	uID, err := h.generateID()
+	uID, err := h.UserIDCache.generateID(h)
 	if err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
@@ -855,7 +838,7 @@ func (h *Handler) createUser(c *fiber.Ctx) error {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
 
-	udID, err := h.generateID()
+	udID, err := h.GenericIDCache.generateID(h)
 	if err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
@@ -881,7 +864,7 @@ func (h *Handler) createUser(c *fiber.Ctx) error {
 
 	initCards := make([]*UserCard, 0, 3)
 	for i := 0; i < 3; i++ {
-		cID, err := h.generateID()
+		cID, err := h.GenericIDCache.generateID(h)
 		if err != nil {
 			return errorResponse(c, http.StatusInternalServerError, err)
 		}
@@ -903,7 +886,7 @@ func (h *Handler) createUser(c *fiber.Ctx) error {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
 
-	deckID, err := h.generateID()
+	deckID, err := h.GenericIDCache.generateID(h)
 	if err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
@@ -938,7 +921,7 @@ func (h *Handler) createUser(c *fiber.Ctx) error {
 	values["userID"] = user.ID
 	values["expiresAt"] = requestAt + 86400
 
-	sessID, err := h.XS.Save("session", values)
+	sessID, err := h.XS.Save("session", &values)
 	if err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
@@ -1029,7 +1012,7 @@ func (h *Handler) login(c *fiber.Ctx) error {
 	values["userID"] = req.UserID
 	values["expiresAt"] = requestAt + 86400
 
-	sessID, err := h.XS.Save("session", values)
+	sessID, err := h.XS.Save("session", &values)
 	if err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
@@ -1257,7 +1240,7 @@ func (h *Handler) drawGacha(c *fiber.Ctx) error {
 	// 直付与 => プレゼントに入れる
 	presents := make([]*UserPresent, 0, gachaCount)
 	for _, v := range result {
-		pID, err := h.generateID()
+		pID, err := h.GenericIDCache.generateID(h)
 		if err != nil {
 			return errorResponse(c, http.StatusInternalServerError, err)
 		}
@@ -1459,7 +1442,7 @@ func (h *Handler) receivePresent(c *fiber.Ctx) error {
 				return errorResponse(c, http.StatusNotFound, err)
 			}
 
-			cID, err := h.generateID()
+			cID, err := h.GenericIDCache.generateID(h)
 			if err != nil {
 				return errorResponse(c, http.StatusInternalServerError, err)
 			}
@@ -1498,7 +1481,7 @@ func (h *Handler) receivePresent(c *fiber.Ctx) error {
 			}
 
 			if uitem == nil { // new
-				uitemID, err := h.generateID()
+				uitemID, err := h.GenericIDCache.generateID(h)
 				if err != nil {
 					return errorResponse(c, http.StatusInternalServerError, err)
 				}
@@ -1529,8 +1512,7 @@ func (h *Handler) receivePresent(c *fiber.Ctx) error {
 	}
 
 	if len(obtainCards) > 0 {
-		if _, err := tx.NamedExec("INSERT INTO user_cards(id, user_id, card_id, amount_per_sec, level, total_exp, created_at, updated_at) "+
-			"VALUES (:id, :user_id, :card_id, :amount_per_sec, :level, :total_exp, :created_at, :updated_at)", obtainCards); err != nil {
+		if _, err := tx.NamedExec("INSERT INTO user_cards(id, user_id, card_id, amount_per_sec, level, total_exp, created_at, updated_at) VALUES (:id, :user_id, :card_id, :amount_per_sec, :level, :total_exp, :created_at, :updated_at)", obtainCards); err != nil {
 			return errorResponse(c, http.StatusInternalServerError, err)
 		}
 	}
@@ -1552,9 +1534,7 @@ func (h *Handler) receivePresent(c *fiber.Ctx) error {
 			updatedMaterials = append(updatedMaterials, mm)
 		}
 
-		if _, err := tx.NamedExec("INSERT INTO user_items(id, user_id, item_id, item_type, amount, created_at, updated_at) "+
-			"VALUES (:id, :user_id, :item_id, :item_type, :amount, :created_at, :updated_at) "+
-			"ON DUPLICATE KEY UPDATE `amount` = VALUES(`amount`), `updated_at` = VALUES(`updated_at`)", updatedMaterials); err != nil {
+		if _, err := tx.NamedExec("INSERT INTO user_items(id, user_id, item_id, item_type, amount, created_at, updated_at) VALUES (:id, :user_id, :item_id, :item_type, :amount, :created_at, :updated_at) ON DUPLICATE KEY UPDATE `amount` = VALUES(`amount`), `updated_at` = VALUES(`updated_at`)", updatedMaterials); err != nil {
 			return errorResponse(c, http.StatusInternalServerError, err)
 		}
 	}
@@ -1931,7 +1911,7 @@ func (h *Handler) updateDeck(c *fiber.Ctx) error {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
 
-	udID, err := h.generateID()
+	udID, err := h.GenericIDCache.generateID(h)
 	if err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
@@ -2146,39 +2126,6 @@ func successResponse(c *fiber.Ctx, v interface{}) error {
 // noContentResponse
 func noContentResponse(c *fiber.Ctx, status int) error {
 	return c.SendStatus(status)
-}
-
-// generateID uniqueなIDを生成する
-func (h *Handler) generateID() (int64, error) {
-	IdGenerateCache.mtx.Lock()
-	defer IdGenerateCache.mtx.Unlock()
-
-	if IdGenerateCache.current < IdGenerateCache.last {
-		IdGenerateCache.current += 1
-		return IdGenerateCache.current - 1, nil
-	}
-
-	var updateErr error
-	for i := 0; i < 100; i++ {
-		res, err := h.getAdminDB().Exec("UPDATE id_generator SET id=LAST_INSERT_ID(id+1000)")
-		if err != nil {
-			if merr, ok := err.(*mysql.MySQLError); ok && merr.Number == 1213 {
-				updateErr = err
-				continue
-			}
-			return 0, err
-		}
-
-		id, err := res.LastInsertId()
-		if err != nil {
-			return 0, err
-		}
-		IdGenerateCache.current = id + 1
-		IdGenerateCache.last = id + 1000
-		return id, nil
-	}
-
-	return 0, fmt.Errorf("failed to generate id: %w", updateErr)
 }
 
 // generateSessionID
