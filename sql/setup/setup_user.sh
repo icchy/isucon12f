@@ -37,10 +37,10 @@ mysql -u"$ISUCON_DB_USER" \
 		-p"$ISUCON_DB_PASSWORD" \
 		--host "$ISUCON_DB_HOST" \
 		--port "$ISUCON_DB_PORT" \
-		"$ISUCON_DB_NAME" < 6_delete_unused_user_records.sql
+		"$ISUCON_DB_NAME" < 6_split_user_presents.sql
 
 mysql -u"$ISUCON_DB_USER" \
 		-p"$ISUCON_DB_PASSWORD" \
 		--host "$ISUCON_DB_HOST" \
 		--port "$ISUCON_DB_PORT" \
-		"$ISUCON_DB_NAME" < 7_split_user_presents.sql
+		"$ISUCON_DB_NAME" < 7_delete_unused_user_records.sql
