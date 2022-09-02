@@ -254,7 +254,7 @@ func (u *UserBanCache) Load(h *Handler) error {
 	u.mtx.Lock()
 	defer u.mtx.Unlock()
 
-	query := "SELECT * FROM user_bans"
+	query := "SELECT id,user_id,created_at,updated_at,deleted_at FROM user_bans"
 	if err := h.getAdminDB().Select(&u.UserBans, query); err != nil {
 		return err
 	}
@@ -299,7 +299,7 @@ func (u *UserDeviceCache) Load(h *Handler) error {
 
 	for i := 0; i < len(h.DB); i++ {
 		tmp := make([]*UserDevice, 0)
-		query := "SELECT * FROM user_devices"
+		query := "SELECT id,user_id,platform_id,platform_type,created_at,updated_at,deleted_at FROM user_devices"
 		if err := h.getDB(int64(i)).Select(&tmp, query); err != nil {
 			return err
 		}
