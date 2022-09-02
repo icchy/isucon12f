@@ -273,3 +273,83 @@ func (u *UserBanCache) getUserBanByUserId(userID int64) *UserBan {
 	}
 	return nil
 }
+
+type UserDeviceCache struct {
+	mtx  sync.RWMutex
+	data map[struct {
+		userID   int64
+		viewerID string
+	}]bool
+}
+
+func NewUserDeviceCache() *UserDeviceCache {
+	return &UserDeviceCache{
+		data: make(map[struct {
+			userID   int64
+			viewerID string
+		}]bool),
+	}
+}
+
+func (u *UserDeviceCache) Load(h *Handler) error {
+	u.mtx.Lock()
+	defer u.mtx.Unlock()
+
+	userDevices := make([]*UserDevice, 0)
+
+	for i := 0; i < len(h.DB); i++ {
+		tmp := make([]*UserDevice, 0)
+		query := "SELECT * FROM user_devices"
+		if err := h.getDB(int64(i)).Select(&tmp, query); err != nil {
+			return err
+		}
+		userDevices = append(userDevices, tmp...)
+	}
+
+	u.data = make(map[struct {
+		userID   int64
+		viewerID string
+	}]bool)
+
+	for _, v := range userDevices {
+		u.data[struct {
+			userID   int64
+			viewerID string
+		}{v.UserID, v.PlatformID}] = true
+	}
+
+	return nil
+}
+
+func (u *UserDeviceCache) checkUserDeviceByIdAndViewerID(user_id int64, viewerID string) bool {
+	u.mtx.RLock()
+	defer u.mtx.RUnlock()
+
+	v, ok := u.data[struct {
+		userID   int64
+		viewerID string
+	}{user_id, viewerID}]
+	if !ok {
+		return false
+	}
+	return v
+}
+
+func (u *UserDeviceCache) addUserDevice(user_id int64, viewerID string) bool {
+	u.mtx.Lock()
+	defer u.mtx.Unlock()
+
+	if _, ok := u.data[struct {
+		userID   int64
+		viewerID string
+	}{user_id, viewerID}]; ok {
+		return false
+	}
+
+	u.data[struct {
+		userID   int64
+		viewerID string
+	}{user_id, viewerID}] = true
+
+	return true
+}

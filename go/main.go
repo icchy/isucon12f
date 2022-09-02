@@ -104,12 +104,12 @@ type Handler struct {
 	TS *TokenStore
 	MD *MasterDataCache
 	UB *UserBanCache
+	UD *UserDeviceCache
 	XS *XSession
 }
 
 func main() {
 	zerolog.TimeFieldFormat = zerolog.TimeFormatUnix
-	clearIdGenerateCache()
 	rand.Seed(time.Now().UnixNano())
 	time.Local = time.FixedZone("Local", 9*60*60)
 
@@ -130,6 +130,7 @@ func main() {
 		TS: NewTokenStore(),
 		MD: NewMasterDataCache(),
 		UB: NewUserBanCache(),
+		UD: NewUserDeviceCache(),
 		XS: NewXSession([]byte("d589788be168c655979c926723310d1b"), []byte("44eb50f2266a78563209058b39aaf289")),
 	}
 
@@ -141,6 +142,12 @@ func main() {
 	if err := h.MD.Load(h); err != nil {
 		log.Fatal().Err(err).Msg("failed to load master data")
 	}
+
+	if err := h.UD.Load(h); err != nil {
+		log.Fatal().Err(err).Msg("failed to load user_device")
+	}
+
+	clearIdGenerateCache()
 
 	// e.Use(middleware.CORS())
 	app.Use(cors.New(cors.Config{}))
@@ -309,15 +316,9 @@ func (h *Handler) newOneTimeToken(tokenType int, requestAt int64) (string, error
 
 // checkViewerID
 func (h *Handler) checkViewerID(userID int64, viewerID string) error {
-	query := "SELECT * FROM user_devices WHERE user_id=? AND platform_id=?"
-	device := new(UserDevice)
-	if err := h.getDB(userID).Get(device, query, userID, viewerID); err != nil {
-		if err == sql.ErrNoRows {
-			return ErrUserDeviceNotFound
-		}
-		return err
+	if res := h.UD.checkUserDeviceByIdAndViewerID(userID, viewerID); !res {
+		return ErrUserDeviceNotFound
 	}
-
 	return nil
 }
 
@@ -793,6 +794,10 @@ func (h *Handler) initialize(c *fiber.Ctx) error {
 		return err
 	}
 
+	if err := h.UD.Load(h); err != nil {
+		log.Fatal().Err(err).Msg("failed to load user_device")
+	}
+
 	clearIdGenerateCache()
 
 	return successResponse(c, &InitializeResponse{
@@ -940,6 +945,10 @@ func (h *Handler) createUser(c *fiber.Ctx) error {
 	err = tx.Commit()
 	if err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
+	}
+
+	if res := h.UD.addUserDevice(user.ID, req.ViewerID); !res {
+		return errorResponse(c, http.StatusInternalServerError, fmt.Errorf("duplicate error: user_device"))
 	}
 
 	return successResponse(c, &CreateUserResponse{
