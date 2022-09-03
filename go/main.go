@@ -328,7 +328,7 @@ func getRequestTime(c *fiber.Ctx) (int64, error) {
 // loginProcess ログイン処理
 func (h *Handler) loginProcess(tx *sqlx.Tx, userID int64, requestAt int64) (*User, []*UserLoginBonus, []*UserPresent, error) {
 	user := new(User)
-	query := "SELECT id,isu_coin,last_getreward_at,last_activated_at,registered_at,created_at,updated_at,deleted_at FROM users WHERE id=?"
+	query := "SELECT id,isu_coin,last_getreward_at,registered_at,created_at FROM users WHERE id=?"
 	if err := tx.Get(user, query, userID); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil, nil, ErrUserNotFound
@@ -337,7 +337,7 @@ func (h *Handler) loginProcess(tx *sqlx.Tx, userID int64, requestAt int64) (*Use
 	}
 
 	// ログインボーナス処理
-	loginBonuses, err := h.obtainLoginBonus(tx, userID, requestAt)
+	loginBonuses, obtainedCoins, err := h.obtainLoginBonus(tx, userID, requestAt)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -348,13 +348,7 @@ func (h *Handler) loginProcess(tx *sqlx.Tx, userID int64, requestAt int64) (*Use
 		return nil, nil, nil, err
 	}
 
-	if err = tx.Get(&user.IsuCoin, "SELECT isu_coin FROM users WHERE id=?", user.ID); err != nil {
-		if err == sql.ErrNoRows {
-			return nil, nil, nil, ErrUserNotFound
-		}
-		return nil, nil, nil, err
-	}
-
+	user.IsuCoin += int64(obtainedCoins)
 	user.UpdatedAt = requestAt
 	user.LastActivatedAt = requestAt
 
@@ -374,30 +368,30 @@ func isCompleteTodayLogin(lastActivatedAt, requestAt time.Time) bool {
 }
 
 // obtainLoginBonus
-func (h *Handler) obtainLoginBonus(tx *sqlx.Tx, userID int64, requestAt int64) ([]*UserLoginBonus, error) {
+func (h *Handler) obtainLoginBonus(tx *sqlx.Tx, userID int64, requestAt int64) ([]*UserLoginBonus, int, error) {
 	// login bonus masterから有効なログインボーナスを取得
 	loginBonuses, err := h.MD.getLoginBonusMasters(requestAt)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
 	sendLoginBonuses := make([]*UserLoginBonus, 0)
 
 	userBonuses := make([]*UserLoginBonus, 0)
 	if err := tx.Select(&userBonuses, "SELECT id,user_id,login_bonus_id,last_reward_sequence,loop_count,created_at,updated_at,deleted_at FROM user_login_bonuses WHERE user_id = ?", userID); err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
 	obtainCoins := 0
 	itemMasters, err := h.MD.getItemMasters()
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	obtainCards := make([]*UserCard, 0, len(loginBonuses))
 
 	userItems := make([]*UserItem, 0)
 	if err := tx.Select(&userItems, "SELECT id,user_id,item_type,item_id,amount,created_at,updated_at,deleted_at FROM user_items WHERE user_id = ?", userID); err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	obtainMaterials := make([]*UserItem, 0, len(loginBonuses))
 
@@ -413,7 +407,7 @@ func (h *Handler) obtainLoginBonus(tx *sqlx.Tx, userID int64, requestAt int64) (
 		if userBonus == nil {
 			ubID, err := h.GenericIDCache.generateID(h)
 			if err != nil {
-				return nil, err
+				return nil, 0, err
 			}
 			userBonus = &UserLoginBonus{ // ボーナス初期化
 				ID:                 ubID,
@@ -443,7 +437,7 @@ func (h *Handler) obtainLoginBonus(tx *sqlx.Tx, userID int64, requestAt int64) (
 		// 今回付与するリソース取得
 		rewardItem, err := h.MD.getLoginBonusRewardMasterByIdAndSeq(bonus.ID, userBonus.LastRewardSequence)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		_, _, _, err = h.obtainItem(tx, userID, rewardItem.ItemID, rewardItem.ItemType, rewardItem.Amount, requestAt)
 
@@ -460,12 +454,12 @@ func (h *Handler) obtainLoginBonus(tx *sqlx.Tx, userID int64, requestAt int64) (
 			}
 
 			if item == nil {
-				return nil, ErrItemNotFound
+				return nil, 0, ErrItemNotFound
 			}
 
 			cID, err := h.GenericIDCache.generateID(h)
 			if err != nil {
-				return nil, err
+				return nil, 0, err
 			}
 
 			card := &UserCard{
@@ -490,7 +484,7 @@ func (h *Handler) obtainLoginBonus(tx *sqlx.Tx, userID int64, requestAt int64) (
 			}
 
 			if item == nil {
-				return nil, ErrItemNotFound
+				return nil, 0, ErrItemNotFound
 			}
 
 			var uitem *UserItem
@@ -504,7 +498,7 @@ func (h *Handler) obtainLoginBonus(tx *sqlx.Tx, userID int64, requestAt int64) (
 			if uitem == nil { // new
 				uitemID, err := h.GenericIDCache.generateID(h)
 				if err != nil {
-					return nil, err
+					return nil, 0, err
 				}
 				uitem = &UserItem{
 					ID:        uitemID,
@@ -521,7 +515,7 @@ func (h *Handler) obtainLoginBonus(tx *sqlx.Tx, userID int64, requestAt int64) (
 			}
 			obtainMaterials = append(obtainMaterials, uitem)
 		default:
-			return nil, ErrInvalidItemType
+			return nil, 0, ErrInvalidItemType
 		}
 
 		sendLoginBonuses = append(sendLoginBonuses, userBonus)
@@ -530,13 +524,13 @@ func (h *Handler) obtainLoginBonus(tx *sqlx.Tx, userID int64, requestAt int64) (
 	if obtainCoins > 0 {
 		// all userIDs included in a request should be the same
 		if _, err := tx.Exec("UPDATE users SET isu_coin = isu_coin + ? WHERE id = ?", obtainCoins, userID); err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 	}
 
 	if len(obtainCards) > 0 {
 		if _, err := tx.NamedExec("INSERT INTO user_cards(id, user_id, card_id, amount_per_sec, level, total_exp, created_at, updated_at) VALUES (:id, :user_id, :card_id, :amount_per_sec, :level, :total_exp, :created_at, :updated_at)", obtainCards); err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 	}
 
@@ -558,16 +552,16 @@ func (h *Handler) obtainLoginBonus(tx *sqlx.Tx, userID int64, requestAt int64) (
 		}
 
 		if _, err := tx.NamedExec("INSERT INTO user_items(id, user_id, item_id, item_type, amount, created_at, updated_at) VALUES (:id, :user_id, :item_id, :item_type, :amount, :created_at, :updated_at) ON DUPLICATE KEY UPDATE `amount` = VALUES(`amount`), `updated_at` = VALUES(`updated_at`)", updatedMaterials); err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 	}
 
 	// 進捗の保存
 	if _, err := tx.NamedExec("INSERT INTO user_login_bonuses(id, user_id, login_bonus_id, last_reward_sequence, loop_count, created_at, updated_at) VALUES (:id, :user_id, :login_bonus_id, :last_reward_sequence, :loop_count, :created_at, :updated_at) ON DUPLICATE KEY UPDATE `last_reward_sequence` = VALUES(`last_reward_sequence`), `loop_count` = VALUES(`loop_count`), `updated_at` = VALUES(`updated_at`)", sendLoginBonuses); err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
-	return sendLoginBonuses, nil
+	return sendLoginBonuses, obtainCoins, nil
 }
 
 // obtainPresent プレゼント付与処理
