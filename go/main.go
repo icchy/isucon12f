@@ -865,7 +865,7 @@ func (h *Handler) login(c *fiber.Ctx) error {
 	}
 
 	user := new(User)
-	query := "SELECT id,isu_coin,last_getreward_at,last_activated_at,registered_at,created_at,updated_at,deleted_at FROM users WHERE id=?"
+	query := "SELECT id,isu_coin,last_getreward_at,last_activated_at,registered_at,created_at FROM users WHERE id=?"
 	if err := h.getDB(req.UserID).Get(user, query, req.UserID); err != nil {
 		if err == sql.ErrNoRows {
 			return errorResponse(c, http.StatusNotFound, ErrUserNotFound)
@@ -1077,7 +1077,7 @@ func (h *Handler) drawGacha(c *fiber.Ctx) error {
 
 	// userのisuconが足りるか
 	user := new(User)
-	query := "SELECT id,isu_coin,last_getreward_at,last_activated_at,registered_at,created_at,updated_at,deleted_at FROM users WHERE id=?"
+	query := "SELECT id,isu_coin FROM users WHERE id=?"
 	if err := h.getDB(userID).Get(user, query, userID); err != nil {
 		if err == sql.ErrNoRows {
 			return errorResponse(c, http.StatusNotFound, ErrUserNotFound)
@@ -1462,7 +1462,7 @@ func (h *Handler) listItem(c *fiber.Ctx) error {
 	}
 
 	user := new(User)
-	query := "SELECT id,isu_coin,last_getreward_at,last_activated_at,registered_at,created_at,updated_at,deleted_at FROM users WHERE id=?"
+	query := "SELECT id,isu_coin,last_getreward_at,last_activated_at,registered_at,created_at,updated_at FROM users WHERE id=?"
 	if err = h.getDB(userID).Get(user, query, userID); err != nil {
 		if err == sql.ErrNoRows {
 			return errorResponse(c, http.StatusNotFound, ErrUserNotFound)
@@ -1866,7 +1866,7 @@ func (h *Handler) reward(c *fiber.Ctx) error {
 
 	// 最後に取得した報酬時刻取得
 	user := new(User)
-	query := "SELECT id,isu_coin,last_getreward_at,last_activated_at,registered_at,created_at,updated_at,deleted_at FROM users WHERE id=?"
+	query := "SELECT id,isu_coin,last_getreward_at,last_activated_at,registered_at,created_at,updated_at FROM users WHERE id=?"
 	if err = h.getDB(userID).Get(user, query, userID); err != nil {
 		if err == sql.ErrNoRows {
 			return errorResponse(c, http.StatusNotFound, ErrUserNotFound)
@@ -1961,7 +1961,7 @@ func (h *Handler) home(c *fiber.Ctx) error {
 
 	// 経過時間
 	user := new(User)
-	query = "SELECT id,isu_coin,last_getreward_at,last_activated_at,registered_at,created_at,updated_at,deleted_at FROM users WHERE id=?"
+	query = "SELECT id,isu_coin,last_getreward_at,last_activated_at,registered_at,created_at,updated_at FROM users WHERE id=?"
 	if err = h.getDB(userID).Get(user, query, userID); err != nil {
 		if err == sql.ErrNoRows {
 			return errorResponse(c, http.StatusNotFound, ErrUserNotFound)
