@@ -1809,15 +1809,15 @@ func (h *Handler) updateDeck(c *fiber.Ctx) error {
 	defer tx.Rollback() //nolint:errcheck
 
 	// update data
-	query = "DELETE FROM user_decks WHERE user_id=?"
-	if _, err = tx.Exec(query, userID); err != nil {
-		return errorResponse(c, http.StatusInternalServerError, err)
-	}
-
 	udID, err := h.GenericIDCache.generateID(h)
 	if err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
+	query = "UPDATE user_decks SET id = ?, user_card_id_1 = ?, user_card_id_2 = ?, user_card_id_3 = ?, created_at = ?, updated_at = ? WHERE user_id = ?"
+	if _, err := tx.Exec(query, udID, req.CardIDs[0], req.CardIDs[1], req.CardIDs[2], requestAt, requestAt, userID); err != nil {
+		return errorResponse(c, http.StatusInternalServerError, err)
+	}
+
 	newDeck := &UserDeck{
 		ID:        udID,
 		UserID:    userID,
@@ -1826,10 +1826,6 @@ func (h *Handler) updateDeck(c *fiber.Ctx) error {
 		CardID3:   req.CardIDs[2],
 		CreatedAt: requestAt,
 		UpdatedAt: requestAt,
-	}
-	query = "INSERT INTO user_decks(id, user_id, user_card_id_1, user_card_id_2, user_card_id_3, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
-	if _, err := tx.Exec(query, newDeck.ID, newDeck.UserID, newDeck.CardID1, newDeck.CardID2, newDeck.CardID3, newDeck.CreatedAt, newDeck.UpdatedAt); err != nil {
-		return errorResponse(c, http.StatusInternalServerError, err)
 	}
 
 	err = tx.Commit()
@@ -1889,7 +1885,7 @@ func (h *Handler) reward(c *fiber.Ctx) error {
 
 	// 使っているデッキの取得
 	deck := new(UserDeck)
-	query = "SELECT id,user_id,user_card_id_1,user_card_id_2,user_card_id_3,created_at,updated_at,deleted_at FROM user_decks WHERE user_id=?"
+	query = "SELECT user_card_id_1,user_card_id_2,user_card_id_3 FROM user_decks WHERE user_id=?"
 	if err = h.getDB(userID).Get(deck, query, userID); err != nil {
 		if err == sql.ErrNoRows {
 			return errorResponse(c, http.StatusNotFound, err)
@@ -1947,7 +1943,7 @@ func (h *Handler) home(c *fiber.Ctx) error {
 
 	// 装備情報
 	deck := new(UserDeck)
-	query := "SELECT id,user_id,user_card_id_1,user_card_id_2,user_card_id_3,created_at,updated_at,deleted_at FROM user_decks WHERE user_id=?"
+	query := "SELECT id,user_id,user_card_id_1,user_card_id_2,user_card_id_3,created_at,updated_at FROM user_decks WHERE user_id=?"
 	if err = h.getDB(userID).Get(deck, query, userID); err != nil {
 		if err != sql.ErrNoRows {
 			return errorResponse(c, http.StatusInternalServerError, err)
