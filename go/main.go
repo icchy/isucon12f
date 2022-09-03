@@ -1490,7 +1490,7 @@ func (h *Handler) listItem(c *fiber.Ctx) error {
 	}
 
 	cardList := make([]*UserCard, 0)
-	query = "SELECT id,user_id,card_id,amount_per_sec,level,total_exp,created_at,updated_at,deleted_at FROM user_cards WHERE user_id=?"
+	query = "SELECT id,user_id,card_id,amount_per_sec,level,total_exp,created_at,updated_at FROM user_cards WHERE user_id=?"
 	if err = h.getDB(userID).Select(&cardList, query, userID); err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
@@ -1561,7 +1561,7 @@ func (h *Handler) addExpToCard(c *fiber.Ctx) error {
 	}
 
 	userCard := UserCard{}
-	if err = h.getDB(userID).Get(&userCard, "SELECT id,user_id,card_id,amount_per_sec,level,total_exp,created_at,updated_at,deleted_at FROM user_cards WHERE id = ? AND user_id = ?", cardID, userID); err != nil {
+	if err = h.getDB(userID).Get(&userCard, "SELECT id,user_id,card_id,amount_per_sec,level,total_exp FROM user_cards WHERE id = ? AND user_id = ?", cardID, userID); err != nil {
 		if err == sql.ErrNoRows {
 			return errorResponse(c, http.StatusNotFound, err)
 		}
@@ -1680,7 +1680,7 @@ func (h *Handler) addExpToCard(c *fiber.Ctx) error {
 
 	// get response data
 	resultCard := new(UserCard)
-	query = "SELECT id,user_id,card_id,amount_per_sec,level,total_exp,created_at,updated_at,deleted_at FROM user_cards WHERE id=?"
+	query = "SELECT id,user_id,card_id,amount_per_sec,level,total_exp,created_at,updated_at FROM user_cards WHERE id=?"
 	if err = tx.Get(resultCard, query, card.ID); err != nil {
 		if err == sql.ErrNoRows {
 			return errorResponse(c, http.StatusNotFound, fmt.Errorf("not found card"))
@@ -1788,16 +1788,16 @@ func (h *Handler) updateDeck(c *fiber.Ctx) error {
 	}
 
 	// カード所持情報のバリデーション
-	query := "SELECT id,user_id,card_id,amount_per_sec,level,total_exp,created_at,updated_at,deleted_at FROM user_cards WHERE id IN (?)"
+	query := "SELECT COUNT(1) FROM user_cards WHERE id IN (?)"
 	query, params, err := sqlx.In(query, req.CardIDs)
 	if err != nil {
 		return errorResponse(c, http.StatusBadRequest, err)
 	}
-	cards := make([]*UserCard, 0)
-	if err = h.getDB(userID).Select(&cards, query, params...); err != nil {
+	cardsCount := 0
+	if err := h.getDB(userID).Get(&cardsCount, query, params...); err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
-	if len(cards) != DeckCardNumber {
+	if cardsCount != DeckCardNumber {
 		return errorResponse(c, http.StatusBadRequest, fmt.Errorf("invalid card ids"))
 	}
 
@@ -1898,7 +1898,7 @@ func (h *Handler) reward(c *fiber.Ctx) error {
 	}
 
 	cards := make([]*UserCard, 0)
-	query = "SELECT id,user_id,card_id,amount_per_sec,level,total_exp,created_at,updated_at,deleted_at FROM user_cards WHERE id IN (?, ?, ?)"
+	query = "SELECT amount_per_sec FROM user_cards WHERE id IN (?, ?, ?)"
 	if err = h.getDB(userID).Select(&cards, query, deck.CardID1, deck.CardID2, deck.CardID3); err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
@@ -1959,7 +1959,7 @@ func (h *Handler) home(c *fiber.Ctx) error {
 	cards := make([]*UserCard, 0)
 	if deck != nil {
 		cardIds := []int64{deck.CardID1, deck.CardID2, deck.CardID3}
-		query, params, err := sqlx.In("SELECT id,user_id,card_id,amount_per_sec,level,total_exp,created_at,updated_at,deleted_at FROM user_cards WHERE id IN (?)", cardIds)
+		query, params, err := sqlx.In("SELECT amount_per_sec FROM user_cards WHERE id IN (?)", cardIds)
 		if err != nil {
 			return errorResponse(c, http.StatusInternalServerError, err)
 		}
