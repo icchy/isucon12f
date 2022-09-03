@@ -1220,7 +1220,7 @@ func (h *Handler) listPresent(c *fiber.Ctx) error {
 	}
 
 	var presentCount int
-	if err = h.getDB(userID).Get(&presentCount, "SELECT COUNT(*) FROM user_presents WHERE user_id = ?", userID); err != nil {
+	if err = h.getDB(userID).Get(&presentCount, "SELECT COUNT(1) FROM user_presents WHERE user_id = ?", userID); err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
 
