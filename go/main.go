@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"sort"
 	"strconv"
 	"sync"
 	"time"
@@ -19,6 +20,7 @@ import (
 	"github.com/gofiber/fiber/v2/middleware/recover"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
+	"github.com/pkg/errors"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 )
@@ -657,7 +659,7 @@ func (h *Handler) initialize(c *fiber.Ctx) error {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
 
-	out, err := exec.Command("/bin/sh", "-c", SQLDirectory+"init.sh").CombinedOutput()
+	out, err := exec.Command("/bin/sh", "-c", SQLDirectory+"mysql_restore.sh").CombinedOutput()
 	if err != nil {
 		log.Fatal().Err(err).Str("stdout", string(out)).Msg("Failed to initialize")
 		return errorResponse(c, http.StatusInternalServerError, err)
@@ -1198,12 +1200,23 @@ func (h *Handler) listPresent(c *fiber.Ctx) error {
 	offset := PresentCountPerPage * (n - 1)
 	presentList := make([]*UserPresent, 0)
 	query := `
-	SELECT id,user_id,sent_at,item_type,item_id,amount,present_message,created_at,updated_at,deleted_at FROM user_presents 
+	SELECT id,user_id,sent_at,item_type,item_id,amount,present_message,created_at,updated_at FROM user_presents 
 	WHERE user_id = ?
-	ORDER BY created_at DESC, id
-	LIMIT ? OFFSET ?`
-	if err = h.getDB(userID).Select(&presentList, query, userID, PresentCountPerPage, offset); err != nil {
+	`
+	if err = h.getDB(userID).Select(&presentList, query, userID); err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
+	}
+	sort.Slice(presentList, func(i, j int) bool {
+		diff := presentList[j].CreatedAt - presentList[i].CreatedAt
+		if diff == 0 {
+			return presentList[i].ID < presentList[j].ID
+		}
+		return diff < 0
+	})
+	if offset > len(presentList) || offset+PresentCountPerPage > len(presentList) {
+		presentList = presentList[:]
+	} else {
+		presentList = presentList[offset : offset+PresentCountPerPage]
 	}
 
 	var presentCount int
@@ -1997,7 +2010,7 @@ func (h *Handler) health(c *fiber.Ctx) error {
 
 // errorResponse returns error.
 func errorResponse(c *fiber.Ctx, statusCode int, err error) error {
-	// log.Error().Int("status", statusCode).Err(err).Msgf("%+v", errors.WithStack(err))
+	log.Error().Int("status", statusCode).Err(err).Msgf("%+v", errors.WithStack(err))
 
 	return c.Status(statusCode).JSON(struct {
 		StatusCode int    `json:"status_code"`
