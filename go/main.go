@@ -392,7 +392,7 @@ func (h *Handler) obtainLoginBonus(tx *sqlx.Tx, userID int64, requestAt int64) (
 	obtainCards := make([]*UserCard, 0, len(loginBonuses))
 
 	userItems := make([]*UserItem, 0)
-	if err := tx.Select(&userItems, "SELECT id,user_id,item_type,item_id,amount,created_at,updated_at,deleted_at FROM user_items WHERE user_id = ?", userID); err != nil {
+	if err := tx.Select(&userItems, "SELECT id,user_id,item_type,item_id,amount,created_at FROM user_items WHERE user_id = ?", userID); err != nil {
 		return nil, 0, err
 	}
 	obtainMaterials := make([]*UserItem, 0, len(loginBonuses))
@@ -1323,7 +1323,7 @@ func (h *Handler) receivePresent(c *fiber.Ctx) error {
 	obtainCards := make([]*UserCard, 0, len(obtainPresent))
 
 	userItems := make([]*UserItem, 0)
-	if err := tx.Select(&userItems, "SELECT id,user_id,item_type,item_id,amount,created_at,updated_at,deleted_at FROM user_items WHERE user_id = ?", userID); err != nil {
+	if err := tx.Select(&userItems, "SELECT item_id FROM user_items WHERE user_id = ?", userID); err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
 	obtainMaterials := make([]*UserItem, 0, len(obtainPresent))
@@ -1484,7 +1484,7 @@ func (h *Handler) listItem(c *fiber.Ctx) error {
 	}
 
 	itemList := make([]*UserItem, 0)
-	query = "SELECT id,user_id,item_type,item_id,amount,created_at,updated_at,deleted_at FROM user_items WHERE user_id = ?"
+	query = "SELECT id,user_id,item_type,item_id,amount,created_at,updated_at FROM user_items WHERE user_id = ?"
 	if err = h.getDB(userID).Select(&itemList, query, userID); err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
@@ -1601,7 +1601,7 @@ func (h *Handler) addExpToCard(c *fiber.Ctx) error {
 	}
 
 	userItems := make([]*UserItem, 0)
-	query, args, err := sqlx.In("SELECT id,user_id,item_type,item_id,amount,created_at,updated_at,deleted_at FROM user_items WHERE user_id = ? AND item_type = 3 AND id IN (?)", userID, ids)
+	query, args, err := sqlx.In("SELECT id,user_id,item_type,item_id,amount,created_at,updated_at FROM user_items WHERE user_id = ? AND item_type = 3 AND id IN (?)", userID, ids)
 	if err != nil {
 		return err
 	}
