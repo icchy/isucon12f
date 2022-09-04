@@ -90,6 +90,7 @@ type Handler struct {
 	UB             *UserBanCache
 	UD             *UserDeviceCache
 	XS             *XSession
+	AdminUserCache *AdminUsersCache
 	UserIDCache    *IdGenerateCache
 	GenericIDCache *IdGenerateCache
 }
@@ -119,6 +120,7 @@ func main() {
 		UB:             NewUserBanCache(),
 		UD:             NewUserDeviceCache(),
 		XS:             NewXSession([]byte("d589788be168c655979c926723310d1b"), []byte("44eb50f2266a78563209058b39aaf289")),
+		AdminUserCache: NewAdminUsersCache(),
 		UserIDCache:    NewIdGenerateCache("uid_generator"),
 		GenericIDCache: NewIdGenerateCache("id_generator"),
 	}
@@ -134,6 +136,10 @@ func main() {
 
 	if err := h.UD.Load(h); err != nil {
 		log.Fatal().Err(err).Msg("failed to load user_device")
+	}
+
+	if err := h.AdminUserCache.Load(h); err != nil {
+		log.Fatal().Err(err).Msg("failed to load admin_users")
 	}
 
 	h.UserIDCache.clearIdGenerateCache()
@@ -236,9 +242,10 @@ func (h *Handler) apiMiddleware(c *fiber.Ctx) error {
 
 // checkSessionMiddleware
 func (h *Handler) checkSessionMiddleware(c *fiber.Ctx) error {
+	sessID := c.Get("x-session")
 	values := make(map[string]int64)
 
-	if err := h.XS.Get(c, "session", &values); err != nil {
+	if err := h.XS.Get("session", sessID, &values); err != nil {
 		return errorResponse(c, http.StatusUnauthorized, ErrUnauthorized)
 	}
 
@@ -671,6 +678,10 @@ func (h *Handler) initialize(c *fiber.Ctx) error {
 
 	if err := h.UD.Load(h); err != nil {
 		log.Fatal().Err(err).Msg("failed to load user_device")
+	}
+
+	if err := h.AdminUserCache.Load(h); err != nil {
+		log.Fatal().Err(err).Msg("failed to load admin_users")
 	}
 
 	h.GenericIDCache.clearIdGenerateCache()

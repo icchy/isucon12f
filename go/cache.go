@@ -1,6 +1,7 @@
 package main
 
 import (
+	"database/sql"
 	"fmt"
 	"sort"
 	"strings"
@@ -408,4 +409,56 @@ func (cache *IdGenerateCache) generateID(h *Handler) (int64, error) {
 
 	return 0, fmt.Errorf("failed to generate id: %w", updateErr)
 
+}
+
+type AdminUsersCache struct {
+	mtx        sync.Mutex
+	AdminUsers []*AdminUser
+}
+
+func NewAdminUsersCache() *AdminUsersCache {
+	return &AdminUsersCache{
+		AdminUsers: make([]*AdminUser, 0),
+	}
+}
+
+func (cache *AdminUsersCache) Load(h *Handler) error {
+	cache.mtx.Lock()
+	defer cache.mtx.Unlock()
+
+	if err := h.getAdminDB().Select(&cache.AdminUsers, "SELECT id, password FROM admin_users"); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (cache *AdminUsersCache) getUserById(userID int64) *AdminUser {
+	cache.mtx.Lock()
+	defer cache.mtx.Unlock()
+
+	for _, v := range cache.AdminUsers {
+		if v.ID == userID {
+			return v
+		}
+	}
+	return nil
+}
+
+func (cache *AdminUsersCache) updateUserRecord(userID, LastActivatedAt, UpdatedAt int64, h *Handler) error {
+	cache.mtx.Lock()
+	defer cache.mtx.Unlock()
+
+	for _, v := range cache.AdminUsers {
+		if v.ID == userID {
+			v.LastActivatedAt = LastActivatedAt
+			v.UpdatedAt = UpdatedAt
+
+			go func() {
+				h.getAdminDB().Exec("UPDATE admin_users SET last_activated_at = ?, updated_at = ? WHERE id = ?", LastActivatedAt, UpdatedAt, userID)
+			}()
+			return nil
+		}
+	}
+
+	return sql.ErrNoRows
 }

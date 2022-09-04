@@ -20,13 +20,14 @@ import (
 func (h *Handler) adminSessionCheckMiddleware(c *fiber.Ctx) error {
 	sessID := c.Get("x-session")
 
-	adminSession := new(Session)
-	query := "SELECT * FROM admin_sessions WHERE session_id=? AND deleted_at IS NULL"
-	if err := h.getAdminDB().Get(adminSession, query, sessID); err != nil {
-		if err == sql.ErrNoRows {
-			return errorResponse(c, http.StatusUnauthorized, ErrUnauthorized)
-		}
+	values := make(map[string]int64)
+	if err := h.XS.Get("admin_session", sessID, &values); err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
+	}
+
+	expiresAt, ok := values["expiresAt"]
+	if !ok {
+		return errorResponse(c, http.StatusUnauthorized, ErrUnauthorized)
 	}
 
 	requestAt, err := getRequestTime(c)
@@ -34,11 +35,7 @@ func (h *Handler) adminSessionCheckMiddleware(c *fiber.Ctx) error {
 		return errorResponse(c, http.StatusInternalServerError, ErrGetRequestTime)
 	}
 
-	if adminSession.ExpiredAt < requestAt {
-		query = "UPDATE admin_sessions SET deleted_at=? WHERE session_id=?"
-		if _, err = h.getAdminDB().Exec(query, requestAt, sessID); err != nil {
-			return errorResponse(c, http.StatusInternalServerError, err)
-		}
+	if expiresAt < requestAt {
 		return errorResponse(c, http.StatusUnauthorized, ErrExpiredSession)
 	}
 
@@ -70,28 +67,26 @@ func (h *Handler) adminLogin(c *fiber.Ctx) error {
 	defer tx.Rollback() //nolint:errcheck
 
 	// userの存在確認
-	query := "SELECT * FROM admin_users WHERE id=?"
-	user := new(AdminUser)
-	if err = tx.Get(user, query, req.UserID); err != nil {
-		if err == sql.ErrNoRows {
-			return errorResponse(c, http.StatusNotFound, ErrUserNotFound)
-		}
-		return errorResponse(c, http.StatusInternalServerError, err)
+	adminUser := h.AdminUserCache.getUserById(req.UserID)
+	if adminUser == nil {
+		return errorResponse(c, http.StatusNotFound, ErrUserNotFound)
 	}
 
 	// verify password
-	if err = verifyPassword(user.Password, req.Password); err != nil {
+	if err = verifyPassword(adminUser.Password, req.Password); err != nil {
 		return errorResponse(c, http.StatusUnauthorized, err)
 	}
 
-	query = "UPDATE admin_users SET last_activated_at=?, updated_at=? WHERE id=?"
-	if _, err = tx.Exec(query, requestAt, requestAt, req.UserID); err != nil {
+	if err := h.AdminUserCache.updateUserRecord(req.UserID, requestAt, requestAt, h); err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
 
 	// すでにあるsessionをdeleteにする
-	query = "UPDATE admin_sessions SET deleted_at=? WHERE user_id=? AND deleted_at IS NULL"
-	if _, err = tx.Exec(query, requestAt, req.UserID); err != nil {
+	values := make(map[string]int64)
+	values["expiresAt"] = requestAt + 86400
+
+	sessID, err := h.XS.Save("admin_session", &values)
+	if err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
 
@@ -100,10 +95,7 @@ func (h *Handler) adminLogin(c *fiber.Ctx) error {
 	if err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
-	sessID, err := generateUUID()
-	if err != nil {
-		return errorResponse(c, http.StatusInternalServerError, err)
-	}
+
 	sess := &Session{
 		ID:        sID,
 		UserID:    req.UserID,
@@ -111,11 +103,6 @@ func (h *Handler) adminLogin(c *fiber.Ctx) error {
 		CreatedAt: requestAt,
 		UpdatedAt: requestAt,
 		ExpiredAt: requestAt + 86400,
-	}
-
-	query = "INSERT INTO admin_sessions(id, user_id, session_id, created_at, updated_at, expired_at) VALUES (?, ?, ?, ?, ?, ?)"
-	if _, err = tx.Exec(query, sess.ID, sess.UserID, sess.SessionID, sess.CreatedAt, sess.UpdatedAt, sess.ExpiredAt); err != nil {
-		return errorResponse(c, http.StatusInternalServerError, err)
 	}
 
 	err = tx.Commit()

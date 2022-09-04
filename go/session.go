@@ -4,7 +4,6 @@ import (
 	"sync"
 
 	"github.com/goccy/go-json"
-	"github.com/gofiber/fiber/v2"
 	"github.com/gorilla/securecookie"
 )
 
@@ -47,8 +46,7 @@ func (sess *XSession) decode(name string, encoded *string, dest *map[string]int6
 	return nil
 }
 
-func (sess *XSession) Get(c *fiber.Ctx, name string, dest *map[string]int64) error {
-	encoded := c.Get("x-session")
+func (sess *XSession) Get(name, encoded string, dest *map[string]int64) error {
 	if err := sess.decode(name, &encoded, dest); err != nil {
 		return err
 	}
