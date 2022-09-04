@@ -380,7 +380,7 @@ func (h *Handler) obtainLoginBonus(tx *sqlx.Tx, userID int64, requestAt int64) (
 	sendLoginBonuses := make([]*UserLoginBonus, 0)
 
 	userBonuses := make([]*UserLoginBonus, 0)
-	if err := tx.Select(&userBonuses, "SELECT id,user_id,login_bonus_id,last_reward_sequence,loop_count,created_at,updated_at,deleted_at FROM user_login_bonuses WHERE user_id = ?", userID); err != nil {
+	if err := tx.Select(&userBonuses, "SELECT id,user_id,login_bonus_id,last_reward_sequence,loop_count,created_at,updated_at FROM user_login_bonuses WHERE user_id = ?", userID); err != nil {
 		return nil, 0, err
 	}
 
@@ -576,7 +576,7 @@ func (h *Handler) obtainPresent(tx *sqlx.Tx, userID int64, requestAt int64) ([]*
 	obtainPresents := make([]*UserPresent, 0)
 
 	received_histories := make([]*UserPresentAllReceivedHistory, 0)
-	query := "SELECT id,user_id,present_all_id,received_at,created_at,updated_at,deleted_at FROM user_present_all_received_history WHERE user_id = ?"
+	query := "SELECT present_all_id FROM user_present_all_received_history WHERE user_id = ?"
 	if err := tx.Select(&received_histories, query, userID); err != nil {
 		return nil, err
 	}
@@ -1271,7 +1271,7 @@ func (h *Handler) receivePresent(c *fiber.Ctx) error {
 	}
 
 	// user_presentsに入っているが未取得のプレゼント取得
-	query := "SELECT id,user_id,sent_at,item_type,item_id,amount,present_message,created_at,updated_at,deleted_at FROM user_presents WHERE id IN (?)"
+	query := "SELECT id,user_id,sent_at,item_type,item_id,amount,present_message,created_at,updated_at FROM user_presents WHERE id IN (?)"
 	query, params, err := sqlx.In(query, req.PresentIDs)
 	if err != nil {
 		return errorResponse(c, http.StatusBadRequest, err)
